@@ -1,0 +1,10 @@
+# Majority function
+.i 3
+.o 1
+.p 3
+.ilb a b c 
+.ob out
+11- 1
+-11 1
+1-1 1
+.e

@@ -1,0 +1,12 @@
+# Majority function - alternative
+.i 3
+.o 1
+.p 5
+.ilb a b c 
+.ob out
+110 1
+111 1
+-11 1
+1-1 1
+101 1
+.e
