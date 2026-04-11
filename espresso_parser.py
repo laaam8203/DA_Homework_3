@@ -1,7 +1,7 @@
 """
 espresso_parser.py
 ──────────────────
-Shared ESPRESSO PLA / cover-table parser and writer for VLSI HW3.
+Shared ESPRESSO PLA / cover-table parser and writer.
 
 Usage (as a library):
     from espresso_parser import Cover, parse_cover, write_cover
@@ -11,6 +11,7 @@ Usage (standalone verification):
 """
 
 from __future__ import annotations
+import os
 import sys
 from dataclasses import dataclass, field
 from typing import List, Optional
@@ -170,6 +171,10 @@ def parse_cover(filepath: str) -> Cover:
 
 def write_cover(cover: Cover, filepath: str) -> None:
     """Write a Cover object back to an ESPRESSO PLA file."""
+    # Ensure parent directory exists
+    parent = os.path.dirname(filepath)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
     with open(filepath, "w") as fh:
         fh.write(f".i {cover.num_inputs}\n")
         fh.write(f".o {cover.num_outputs}\n")
@@ -181,6 +186,48 @@ def write_cover(cover: Cover, filepath: str) -> None:
         for cube in cover.cubes:
             fh.write(f"{cube} 1\n")
         fh.write(".e\n")
+
+
+# ----------------------------------------------------------------------
+# Output path helper
+# ----------------------------------------------------------------------
+
+def get_output_path(input_filepath: str, suffix: str,
+                    category: str = "Results") -> str:
+    """
+    Compute the output file path for a given input file.
+
+    Parameters
+    ----------
+    input_filepath : str
+        Path to the input cover file.
+    suffix : str
+        Suffix to append to the basename (e.g. '_off_cube', '_report.txt').
+    category : str
+        Sub-category folder label appended after the input folder name.
+        Examples: 'Tautcheck-Results', 'Tautcheck-Reports',
+                  'Complgen-Results', 'Complgen-Reports'.
+
+    Rules:
+        - If the input file is in the current directory (no parent folder),
+          the output is written next to it:  <basename><suffix>
+        - If the input file is inside a subfolder, the output goes into a
+          new sibling folder named  <input_folder>-<category>/:
+              Tautology-Checking-Tests/TC_T5  (category='Tautcheck-Results')
+              -> Tautology-Checking-Tests-Tautcheck-Results/TC_T5<suffix>
+
+    The output directory is created automatically if it does not exist.
+    """
+    input_dir = os.path.dirname(input_filepath)
+    basename = os.path.basename(input_filepath)
+    output_filename = basename + suffix
+
+    if input_dir:
+        results_dir = input_dir.rstrip("/\\") + "-" + category
+        os.makedirs(results_dir, exist_ok=True)
+        return os.path.join(results_dir, output_filename)
+    else:
+        return output_filename
 
 
 # ──────────────────────────────────────────────────────────────────────

@@ -1,0 +1,17 @@
+============================================================
+  Tautology Check: TC_T6
+============================================================
+  Variables : 50
+  Cubes     : 10000
+  Result    : NOT a tautology
+  Witness   : 10111110000010000110010101101111101110101010001011
+  Witness written to: Tautology-Checking-Tests-Tautcheck-Results\TC_T6_off_cube
+
+  -- Instrumentation --
+  Execution time     : 8.004559 s
+  Peak memory        : 2063.40 KB
+  Max recursion depth : 49
+  Base-case tautology : 37532
+  Base-case NOT taut  : 1
+  Unate reductions    : 0
+  Binate splits       : 37558

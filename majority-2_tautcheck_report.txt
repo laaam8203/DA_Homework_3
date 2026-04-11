@@ -1,0 +1,17 @@
+============================================================
+  Tautology Check: majority-2
+============================================================
+  Variables : 3
+  Cubes     : 5
+  Result    : NOT a tautology
+  Witness   : 001
+  Witness written to: majority-2_off_cube
+
+  -- Instrumentation --
+  Execution time     : 0.000110 s
+  Peak memory        : 3.12 KB
+  Max recursion depth : 2
+  Base-case tautology : 1
+  Base-case NOT taut  : 1
+  Unate reductions    : 0
+  Binate splits       : 2

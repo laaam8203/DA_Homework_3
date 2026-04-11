@@ -24,7 +24,7 @@ import tracemalloc
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
 
-from espresso_parser import Cover, parse_cover, write_cover
+from espresso_parser import Cover, parse_cover, write_cover, get_output_path
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -266,13 +266,14 @@ def main() -> None:
         sys.exit(1)
 
     for filepath in sys.argv[1:]:
-        print(f"\n{'='*60}")
-        print(f"  Tautology Check: {os.path.basename(filepath)}")
-        print(f"{'='*60}")
+        report = []
+        report.append(f"{'='*60}")
+        report.append(f"  Tautology Check: {os.path.basename(filepath)}")
+        report.append(f"{'='*60}")
 
         cover = parse_cover(filepath)
-        print(f"  Variables : {cover.num_inputs}")
-        print(f"  Cubes     : {cover.num_cubes}")
+        report.append(f"  Variables : {cover.num_inputs}")
+        report.append(f"  Cubes     : {cover.num_cubes}")
 
         # Start measurement
         tracemalloc.start()
@@ -288,13 +289,13 @@ def main() -> None:
 
         # Results
         if is_taut:
-            print(f"  Result    : TAUTOLOGY")
+            report.append(f"  Result    : TAUTOLOGY")
         else:
-            print(f"  Result    : NOT a tautology")
-            print(f"  Witness   : {witness}")
+            report.append(f"  Result    : NOT a tautology")
+            report.append(f"  Witness   : {witness}")
 
             # Write witness file
-            witness_path = filepath + "_off_cube"
+            witness_path = get_output_path(filepath, "_off_cube", "Tautcheck-Results")
             witness_cover = Cover(
                 num_inputs=cover.num_inputs,
                 num_outputs=cover.num_outputs,
@@ -303,17 +304,28 @@ def main() -> None:
                 cubes=[witness],
             )
             write_cover(witness_cover, witness_path)
-            print(f"  Witness written to: {witness_path}")
+            report.append(f"  Witness written to: {witness_path}")
 
         # Instrumentation
-        print(f"\n  -- Instrumentation --")
-        print(f"  Execution time     : {elapsed:.6f} s")
-        print(f"  Peak memory        : {peak_mem / 1024:.2f} KB")
-        print(f"  Max recursion depth : {stats.max_depth}")
-        print(f"  Base-case tautology : {stats.base_case_tautology}")
-        print(f"  Base-case NOT taut  : {stats.base_case_not_tautology}")
-        print(f"  Unate reductions    : {stats.unate_reductions}")
-        print(f"  Binate splits       : {stats.binate_splits}")
+        report.append(f"")
+        report.append(f"  -- Instrumentation --")
+        report.append(f"  Execution time     : {elapsed:.6f} s")
+        report.append(f"  Peak memory        : {peak_mem / 1024:.2f} KB")
+        report.append(f"  Max recursion depth : {stats.max_depth}")
+        report.append(f"  Base-case tautology : {stats.base_case_tautology}")
+        report.append(f"  Base-case NOT taut  : {stats.base_case_not_tautology}")
+        report.append(f"  Unate reductions    : {stats.unate_reductions}")
+        report.append(f"  Binate splits       : {stats.binate_splits}")
+
+        # Print to terminal
+        for line in report:
+            print(line)
+
+        # Write report to text file in results folder
+        report_path = get_output_path(filepath, "_tautcheck_report.txt", "Tautcheck-Reports")
+        with open(report_path, "w") as f:
+            f.write("\n".join(report) + "\n")
+        print(f"\n  Report written to: {report_path}")
 
 
 if __name__ == "__main__":

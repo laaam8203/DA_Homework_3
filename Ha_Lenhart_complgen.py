@@ -23,7 +23,7 @@ import time
 import tracemalloc
 from typing import List, Tuple
 
-from espresso_parser import Cover, parse_cover, write_cover
+from espresso_parser import Cover, parse_cover, write_cover, get_output_path
 
 
 # ======================================================================
@@ -352,13 +352,14 @@ def main() -> None:
         sys.exit(1)
 
     for filepath in sys.argv[1:]:
-        print(f"\n{'='*60}")
-        print(f"  Complement Generation: {os.path.basename(filepath)}")
-        print(f"{'='*60}")
+        report = []
+        report.append(f"{'='*60}")
+        report.append(f"  Complement Generation: {os.path.basename(filepath)}")
+        report.append(f"{'='*60}")
 
         cover = parse_cover(filepath)
-        print(f"  Variables    : {cover.num_inputs}")
-        print(f"  Input cubes  : {cover.num_cubes}")
+        report.append(f"  Variables    : {cover.num_inputs}")
+        report.append(f"  Input cubes  : {cover.num_cubes}")
 
         tracemalloc.start()
         t_start = time.perf_counter()
@@ -372,16 +373,27 @@ def main() -> None:
         elapsed = t_end - t_start
 
         # Write complement file
-        out_path = filepath + "_compl"
+        out_path = get_output_path(filepath, "_compl", "Complgen-Results")
         write_cover(compl, out_path)
 
-        print(f"  Output cubes : {compl.num_cubes}")
-        print(f"  Written to   : {out_path}")
+        report.append(f"  Output cubes : {compl.num_cubes}")
+        report.append(f"  Written to   : {out_path}")
 
         # Stats
-        print(f"\n  -- Instrumentation --")
-        print(f"  Execution time : {elapsed:.6f} s")
-        print(f"  Peak memory    : {peak_mem / 1024:.2f} KB")
+        report.append(f"")
+        report.append(f"  -- Instrumentation --")
+        report.append(f"  Execution time : {elapsed:.6f} s")
+        report.append(f"  Peak memory    : {peak_mem / 1024:.2f} KB")
+
+        # Print to terminal
+        for line in report:
+            print(line)
+
+        # Write report to text file in results folder
+        report_path = get_output_path(filepath, "_complgen_report.txt", "Complgen-Reports")
+        with open(report_path, "w") as f:
+            f.write("\n".join(report) + "\n")
+        print(f"\n  Report written to: {report_path}")
 
 
 if __name__ == "__main__":

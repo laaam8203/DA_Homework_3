@@ -1,0 +1,11 @@
+============================================================
+  Complement Generation: majority-1
+============================================================
+  Variables    : 3
+  Input cubes  : 3
+  Output cubes : 3
+  Written to   : majority-1_compl
+
+  -- Instrumentation --
+  Execution time : 0.000160 s
+  Peak memory    : 8.50 KB
