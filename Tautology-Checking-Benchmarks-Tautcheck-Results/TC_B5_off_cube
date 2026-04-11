@@ -1,0 +1,7 @@
+.i 17
+.o 1
+.p 1
+.ilb in0 in1 in2 in3 in4 in5 in6 in7 in8 in9 in10 in11 in12 in13 in14 in15 in16
+.ob out
+10111111111101011 1
+.e

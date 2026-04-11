@@ -5,13 +5,13 @@
   Cubes     : 1000
   Result    : NOT a tautology
   Witness   : 1111010000000111111001100
-  Witness written to: Tautology-Checking-Tests-Tautcheck-Results\TC_T5_off_cube
+  Witness written to: Tautology-Checking-Tests-Tautcheck-Results/TC_T5_off_cube
 
   -- Instrumentation --
-  Execution time     : 0.093661 s
-  Peak memory        : 176.17 KB
+  Execution time     : 0.014257 s
+  Peak memory        : 671.22 KB
   Max recursion depth : 24
-  Base-case tautology : 595
+  Base-case tautology : 250
   Base-case NOT taut  : 1
-  Unate reductions    : 0
-  Binate splits       : 608
+  Unate reductions    : 319
+  Binate splits       : 259

@@ -1,0 +1,17 @@
+============================================================
+  Tautology Check: TC_B1
+============================================================
+  Variables : 16
+  Cubes     : 17733
+  Result    : NOT a tautology
+  Witness   : 1110111101111111
+  Witness written to: Tautology-Checking-Benchmarks-Tautcheck-Results/TC_B1_off_cube
+
+  -- Instrumentation --
+  Execution time     : 0.042152 s
+  Peak memory        : 8853.98 KB
+  Max recursion depth : 14
+  Base-case tautology : 1
+  Base-case NOT taut  : 1
+  Unate reductions    : 0
+  Binate splits       : 14

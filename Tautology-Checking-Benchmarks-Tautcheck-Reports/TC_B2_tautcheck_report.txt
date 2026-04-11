@@ -1,0 +1,15 @@
+============================================================
+  Tautology Check: TC_B2
+============================================================
+  Variables : 16
+  Cubes     : 22684
+  Result    : TAUTOLOGY
+
+  -- Instrumentation --
+  Execution time     : 0.893664 s
+  Peak memory        : 12682.45 KB
+  Max recursion depth : 16
+  Base-case tautology : 12127
+  Base-case NOT taut  : 0
+  Unate reductions    : 469
+  Binate splits       : 12126
