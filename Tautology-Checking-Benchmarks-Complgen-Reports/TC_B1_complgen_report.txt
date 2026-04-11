@@ -1,0 +1,11 @@
+============================================================
+  Complement Generation: TC_B1
+============================================================
+  Variables    : 16
+  Input cubes  : 17733
+  Output cubes : 6420
+  Written to   : .\Tautology-Checking-Benchmarks-Complgen-Results\TC_B1_compl
+
+  -- Instrumentation --
+  Execution time : 228.832862 s
+  Peak memory    : 11464.85 KB
