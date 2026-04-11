@@ -1,19 +1,19 @@
 """
 Ha_Lenhart_complgen.py
 ──────────────────────
-Complement Cover Generator for ESPRESSO PLA covers.
-Uses the Unate Recursive Paradigm (URP) with Shannon cofactoring
-to compute the complement in SCC-minimal form.
+Complement Generator for ESPRESSO PLA covers.
+Uses the Unate Recursive Paradigm (URP) with Shannon expansion to compute
+the exact complement (OFF-set).
 
 Execution:
-    python Ha_Lenhart_complgen.py <cover_file> [<cover_file2> ...]
+    python Ha_Lenhart_complgen.py <cover_file>
 
 Output:
-    - Writes complement cover to <cover_file>_compl in ESPRESSO format.
-    - Prints execution statistics to the terminal.
+    - Writes the complement cover to <cover_file>_compl
+    - Prints instrumentation statistics to the terminal.
 
 Authors: Ha, Lenhart
-Course : VLSI Design Automation (EECE 5186C/6086C) - HW3
+Course : VLSI Design Automation (EECE 5186C/6086C) – HW3
 """
 
 from __future__ import annotations
@@ -25,7 +25,6 @@ from typing import List, Tuple
 
 from espresso_parser import Cover, parse_cover, write_cover, get_output_path
 
-
 COMPLGEN_TIMEOUT = 60 * 60  # 1 hour in seconds
 
 
@@ -35,302 +34,221 @@ class ComplementTimeout(Exception):
 
 
 # ======================================================================
-# Core helpers (shared with tautology checker logic)
+# Bitmask helpers
 # ======================================================================
 
-def _column(cubes: List[str], var: int) -> Tuple[int, int, int]:
-    """Return (count_0, count_1, count_dc) for variable *var*."""
-    c0 = c1 = cd = 0
-    for cube in cubes:
-        ch = cube[var]
-        if ch == '0':
-            c0 += 1
-        elif ch == '1':
-            c1 += 1
-        else:
-            cd += 1
-    return c0, c1, cd
+def _str_to_masks(s: str, n: int) -> Tuple[int, int]:
+    m1 = 0; m0 = 0
+    for ch in s:
+        m1 <<= 1; m0 <<= 1
+        if ch == '1':   m1 |= 1
+        elif ch == '0': m0 |= 1
+        else:           m1 |= 1; m0 |= 1
+    return m1, m0
 
 
-def _is_unate(cubes: List[str], num_vars: int) -> bool:
-    """A cover is unate if every variable appears in only one polarity."""
-    for v in range(num_vars):
-        c0, c1, _ = _column(cubes, v)
-        if c0 > 0 and c1 > 0:
-            return False
-    return True
+def _masks_to_str(m1: int, m0: int, n: int) -> str:
+    chars = []
+    for i in range(n):
+        shift = n - 1 - i
+        b1 = (m1 >> shift) & 1
+        b0 = (m0 >> shift) & 1
+        if b1 and b0:   chars.append('-')
+        elif b1:        chars.append('1')
+        elif b0:        chars.append('0')
+        else:           chars.append('0')
+    return ''.join(chars)
 
 
-def _has_all_dc_row(cubes: List[str]) -> bool:
-    """True if some cube is all don't-cares."""
-    return any(all(ch == '-' for ch in c) for c in cubes)
-
-
-def _cofactor(cubes: List[str], var: int, val: str) -> List[str]:
-    """Cofactor the cube list with respect to variable *var* = *val*."""
-    opp = '1' if val == '0' else '0'
-    result = []
-    for cube in cubes:
-        ch = cube[var]
-        if ch == opp:
-            continue
-        new_cube = cube[:var] + '-' + cube[var + 1:]
-        result.append(new_cube)
-    return result
-
-
-def _pick_binate_variable(cubes: List[str], num_vars: int) -> int:
-    """Choose the most binate variable for splitting."""
-    best_var = -1
-    best_literal_count = -1
-    best_balance = float('inf')
-
-    for v in range(num_vars):
-        c0, c1, cd = _column(cubes, v)
-        if c0 == 0 or c1 == 0:
-            continue
-        literal_count = c0 + c1
-        balance = abs(c1 - c0)
-        if (literal_count > best_literal_count or
-                (literal_count == best_literal_count and balance < best_balance)):
-            best_var = v
-            best_literal_count = literal_count
-            best_balance = balance
-
-    return best_var
-
-
-# ======================================================================
-# AND / OR of cube lists  (intersection / union helpers)
-# ======================================================================
-
-def _and_cube(a: str, b: str) -> str | None:
+def _merge_adjacent(cubes: List[Tuple[int, int]], all_ones: int) -> List[Tuple[int, int]]:
     """
-    Intersect two cubes.  Returns None if the intersection is empty.
-    Each position:
-        '-' & x  = x
-         x  & x  = x
-        '0' & '1' = empty
+    Merge distance-1 cubes to keep the complement size minimal.
+    Distance-1: Two cubes agree everywhere except in one bit where one has 0 and another has 1.
+    They can be merged to '-' (both bits 1).
     """
-    result = []
-    for ca, cb in zip(a, b):
-        if ca == '-':
-            result.append(cb)
-        elif cb == '-':
-            result.append(ca)
-        elif ca == cb:
-            result.append(ca)
-        else:
-            return None  # empty intersection
-    return ''.join(result)
+    if len(cubes) < 2:
+        return cubes
+
+    merged_any = True
+    while merged_any:
+        merged_any = False
+        n = len(cubes)
+        keep = [True] * n
+        new_cubes = []
+        for i in range(n):
+            if not keep[i]: continue
+            on_i, off_i = cubes[i]
+            merged_this = False
+            for j in range(i + 1, n):
+                if not keep[j]: continue
+                on_j, off_j = cubes[j]
+                
+                # Check distance 1:
+                # They must agree on care vs dc structure (optional but simplifies)
+                # Actually, simpler: they differ in exactly one literal.
+                diff_on = on_i ^ on_j
+                diff_off = off_i ^ off_j
+                # To be safely mergeable via naive consensus into a single cube covering exact same minterms:
+                # They must have exactly the same DCs everywhere except the single merge var.
+                # Actually, a safer and strict definition:
+                # diff_on & diff_off must both be exactly the same single bit position, 
+                # AND at that bit, one cube is 1 and the other is 0.
+                if diff_on == diff_off and diff_on != 0 and (diff_on & (diff_on - 1)) == 0:
+                    # differ in exactly one bit
+                    # Also must be completely identical everywhere else
+                    # This means their masking out that bit makes them equal
+                    mask_out = all_ones ^ diff_on
+                    if (on_i & mask_out) == (on_j & mask_out) and (off_i & mask_out) == (off_j & mask_out):
+                        # Merge them! The varying bit becomes dc (1 inside both on and off)
+                        new_on = on_i | diff_on
+                        new_off = off_i | diff_on
+                        new_cubes.append((new_on, new_off))
+                        keep[i] = False
+                        keep[j] = False
+                        merged_this = True
+                        merged_any = True
+                        break
+            
+            if not merged_this:
+                new_cubes.append((on_i, off_i))
+
+        cubes = new_cubes
+
+    return cubes
 
 
-def _and_cube_with_literal(cube: str, var: int, val: str) -> str | None:
-    """
-    Intersect *cube* with the literal  x_var = val.
-    Returns None if the result is empty.
-    """
-    ch = cube[var]
-    if ch == val or ch == '-':
-        return cube[:var] + val + cube[var + 1:]
-    return None  # conflict
+def _remove_contained_cubes(cubes: List[Tuple[int, int]], all_ones: int) -> List[Tuple[int, int]]:
+    n = len(cubes)
+    if n <= 1: return cubes
+    
+    processed = []
+    for on, off in cubes:
+        care = (on ^ off) & all_ones
+        processed.append((care.bit_count(), care, on, off))
+        
+    processed.sort(key=lambda x: x[0])
+    
+    keep = []
+    for bc_i, care_i, on_i, off_i in processed:
+        is_subsumed = False
+        for care_j, on_j, off_j in keep:
+            if (care_j & ~care_i) == 0 and (on_j & care_j) == (on_i & care_j):
+                is_subsumed = True
+                break
+        if not is_subsumed:
+            keep.append((care_i, on_i, off_i))
+            
+    return [(on, off) for care, on, off in keep]
 
 
 # ======================================================================
 # Complement via URP   (F_bar = x * Fx_bar  +  x' * Fx'_bar)
 # ======================================================================
 
-def _complement(cubes: List[str], num_vars: int, deadline: float = 0) -> List[str]:
-    """
-    Recursively compute the complement of *cubes*.
-    Returns a list of cubes representing the complement cover.
-    """
+def _complement(
+    cubes: List[Tuple[int, int]], 
+    active_vars: int, 
+    num_vars: int, 
+    all_ones: int, 
+    deadline: float = 0
+) -> List[Tuple[int, int]]:
+    """Recursively compute the complement of *cubes*."""
 
-    # -- Base case: empty cover -> complement is the whole space -------
     if not cubes:
-        return ['-' * num_vars]
+        return [(all_ones, all_ones)]
 
-    # -- Base case: tautology -> complement is empty -------------------
-    if _has_all_dc_row(cubes):
-        return []
+    for on, off in cubes:
+        if on == all_ones and off == all_ones:
+            return []
 
-    # -- Base case: single cube ----------------------------------------
+    # Filter subsumption (optional but helps keep cover clean before cofactoring)
+    cubes = _remove_contained_cubes(cubes, all_ones)
+    if not cubes:
+        return [(all_ones, all_ones)]
+    for on, off in cubes:
+        if on == all_ones and off == all_ones:
+            return []
+
     if len(cubes) == 1:
-        return _complement_single_cube(cubes[0], num_vars)
+        # single cube -> De Morgan's
+        on_i, off_i = cubes[0]
+        res = []
+        for v in range(num_vars):
+            vbit = 1 << (num_vars - 1 - v)
+            if not (active_vars & vbit): continue
+            b1 = (on_i & vbit)
+            b0 = (off_i & vbit)
+            if b1 and b0: continue # dc
+            # if 1, compl is 0. if 0, compl is 1.
+            n_on = all_ones
+            n_off = all_ones
+            if b1 and not b0:
+                n_on &= ~vbit
+            elif b0 and not b1:
+                n_off &= ~vbit
+            res.append((n_on, n_off))
+        return res
 
-    # -- Unate cover ---------------------------------------------------
-    if _is_unate(cubes, num_vars):
-        return _complement_unate(cubes, num_vars, deadline)
+    best_var = -1
+    best_score = -1
+    best_balance = float('inf')
+    is_unate = True
+    n_c = len(cubes)
 
-    # -- Binate split (Shannon expansion) ------------------------------
-    # Check timeout before expensive recursive calls
+    for v in range(num_vars):
+        vbit = 1 << (num_vars - 1 - v)
+        if not (active_vars & vbit): continue
+        c1 = sum(1 for on, off in cubes if (on & vbit) and not (off & vbit))
+        c0 = sum(1 for on, off in cubes if (off & vbit) and not (on & vbit))
+        cd = n_c - c1 - c0
+
+        if c0 > 0 and c1 > 0:
+            is_unate = False
+            score = c0 + c1
+            bal = abs(c1 - c0)
+            if score > best_score or (score == best_score and bal < best_balance):
+                best_var = v; best_score = score; best_balance = bal
+
+    if is_unate:
+        # For unate, we can technically just use the same cofactor splitting!
+        # The true URP unate algorithm cofactors on a variable of the unate cover. 
+        # But we must pick a variable that actually HAS a literal (i.e. c1 > 0 or c0 > 0).
+        best_var = -1
+        for v in range(num_vars):
+            vbit = 1 << (num_vars - 1 - v)
+            if not (active_vars & vbit): continue
+            c1 = sum(1 for on, off in cubes if (on & vbit) and not (off & vbit))
+            c0 = sum(1 for on, off in cubes if (off & vbit) and not (on & vbit))
+            if c1 > 0 or c0 > 0:
+                best_var = v
+                break
+        
+        if best_var == -1:
+            # all active vars are DC -> tautology
+            return []
+
     if deadline and time.perf_counter() > deadline:
         raise ComplementTimeout()
 
-    var = _pick_binate_variable(cubes, num_vars)
+    vbit = 1 << (num_vars - 1 - best_var)
+    new_active = active_vars & ~vbit
 
-    pos_cubes = _cofactor(cubes, var, '1')
-    neg_cubes = _cofactor(cubes, var, '0')
+    pos_cubes = list(set((on | vbit, off | vbit) for on, off in cubes if not ((off & vbit) and not (on & vbit))))
+    neg_cubes = list(set((on | vbit, off | vbit) for on, off in cubes if not ((on & vbit) and not (off & vbit))))
 
-    compl_pos = _complement(pos_cubes, num_vars, deadline)
-    compl_neg = _complement(neg_cubes, num_vars, deadline)
+    compl_pos = _complement(pos_cubes, new_active, num_vars, all_ones, deadline)
+    compl_neg = _complement(neg_cubes, new_active, num_vars, all_ones, deadline)
 
-    # F_bar = x_var * compl_pos  +  x_var' * compl_neg
     result = []
-    for c in compl_pos:
-        new_c = c[:var] + '1' + c[var + 1:]
-        result.append(new_c)
-    for c in compl_neg:
-        new_c = c[:var] + '0' + c[var + 1:]
-        result.append(new_c)
+    # F_bar = x * compl_pos  +  x' * compl_neg
+    for on_c, off_c in compl_pos:
+        result.append((on_c | vbit, off_c & ~vbit))
+    for on_c, off_c in compl_neg:
+        result.append((on_c & ~vbit, off_c | vbit))
 
-    # Merge adjacent cubes where possible (simple SCC reduction)
-    result = _merge_adjacent(result, num_vars)
-
+    result = _merge_adjacent(result, all_ones)
+    result = _remove_contained_cubes(result, all_ones)
     return result
-
-
-def _complement_single_cube(cube: str, num_vars: int) -> List[str]:
-    """
-    Complement of a single cube via De Morgan's law.
-    E.g.  complement of '1-0' is ['0--', '--1']
-    Only positions that are '0' or '1' contribute a cube.
-    """
-    result = []
-    for i, ch in enumerate(cube):
-        if ch == '-':
-            continue
-        new_cube = ['-'] * num_vars
-        new_cube[i] = '1' if ch == '0' else '0'
-        result.append(''.join(new_cube))
-    return result
-
-
-def _complement_unate(cubes: List[str], num_vars: int, deadline: float = 0) -> List[str]:
-    """
-    Complement of a unate cover.
-
-    For a unate cover, the complement can be computed by complementing
-    each variable's "active" column and combining.  We use a recursive
-    approach: pick a variable that appears as a literal, cofactor, and
-    recombine.
-    """
-    # Find a variable that has literals (not all dc)
-    for v in range(num_vars):
-        c0, c1, cd = _column(cubes, v)
-        if c0 > 0 or c1 > 0:
-            # This variable has at least some non-dc entries
-            if c0 > 0 and c1 > 0:
-                # Should not happen in unate cover
-                break
-            if c1 > 0:
-                # Positive unate in this variable
-                pos_cubes = _cofactor(cubes, v, '1')
-                neg_cubes = _cofactor(cubes, v, '0')
-                compl_pos = _complement(pos_cubes, num_vars, deadline)
-                compl_neg = _complement(neg_cubes, num_vars, deadline)
-                result = []
-                for c in compl_pos:
-                    result.append(c[:v] + '1' + c[v + 1:])
-                for c in compl_neg:
-                    result.append(c[:v] + '0' + c[v + 1:])
-                return _merge_adjacent(result, num_vars)
-            else:
-                # Negative unate
-                pos_cubes = _cofactor(cubes, v, '1')
-                neg_cubes = _cofactor(cubes, v, '0')
-                compl_pos = _complement(pos_cubes, num_vars, deadline)
-                compl_neg = _complement(neg_cubes, num_vars, deadline)
-                result = []
-                for c in compl_pos:
-                    result.append(c[:v] + '1' + c[v + 1:])
-                for c in compl_neg:
-                    result.append(c[:v] + '0' + c[v + 1:])
-                return _merge_adjacent(result, num_vars)
-
-    # If all columns are dc, cover is tautology → complement is empty
-    return []
-
-
-# ======================================================================
-# Simple SCC-minimality helper: merge adjacent cubes
-# ======================================================================
-
-def _merge_adjacent(cubes: List[str], num_vars: int) -> List[str]:
-    """
-    Repeatedly merge pairs of cubes that differ in exactly one variable
-    (one has '0', the other '1', rest identical).
-    This produces a more compact (SCC-minimal-like) result.
-    """
-    changed = True
-    while changed:
-        changed = False
-        new_cubes = []
-        used = [False] * len(cubes)
-        for i in range(len(cubes)):
-            if used[i]:
-                continue
-            merged = False
-            for j in range(i + 1, len(cubes)):
-                if used[j]:
-                    continue
-                m = _try_merge(cubes[i], cubes[j], num_vars)
-                if m is not None:
-                    new_cubes.append(m)
-                    used[i] = True
-                    used[j] = True
-                    merged = True
-                    changed = True
-                    break
-            if not merged:
-                new_cubes.append(cubes[i])
-        cubes = new_cubes
-
-    # Remove cubes that are contained by another cube (superset check)
-    cubes = _remove_contained(cubes)
-
-    return cubes
-
-
-def _try_merge(a: str, b: str, num_vars: int) -> str | None:
-    """If a and b differ in exactly one position (0 vs 1), merge to '-'."""
-    diff_count = 0
-    diff_pos = -1
-    for i in range(num_vars):
-        if a[i] != b[i]:
-            diff_count += 1
-            diff_pos = i
-            if diff_count > 1:
-                return None
-    if diff_count == 1 and a[diff_pos] in '01' and b[diff_pos] in '01':
-        return a[:diff_pos] + '-' + a[diff_pos + 1:]
-    return None
-
-
-def _cube_contains(big: str, small: str) -> bool:
-    """True if cube *big* is a superset of cube *small*."""
-    for a, b in zip(big, small):
-        if a == '-':
-            continue
-        if a != b:
-            return False
-    return True
-
-
-def _remove_contained(cubes: List[str]) -> List[str]:
-    """Remove cubes that are strictly contained by another cube."""
-    keep = []
-    for i, ci in enumerate(cubes):
-        contained = False
-        for j, cj in enumerate(cubes):
-            if i == j:
-                continue
-            if _cube_contains(cj, ci) and not (ci == cj and j > i):
-                contained = True
-                break
-        if not contained:
-            keep.append(ci)
-    return keep
 
 
 # ======================================================================
@@ -338,16 +256,21 @@ def _remove_contained(cubes: List[str]) -> List[str]:
 # ======================================================================
 
 def generate_complement(cover: Cover, timeout: float = COMPLGEN_TIMEOUT) -> Cover:
-    """Compute and return the complement of *cover* as a new Cover.
-    Returns a Cover with an empty cube list if the operation times out.
-    """
+    """Compute and return the complement of *cover* as a new Cover."""
+    num_vars = cover.num_inputs
+    all_ones = (1 << num_vars) - 1
+    mask_cubes = [_str_to_masks(c, num_vars) for c in cover.cubes]
     deadline = time.perf_counter() + timeout if timeout else 0
+    
     try:
-        compl_cubes = _complement(cover.cubes, cover.num_inputs, deadline)
+        compl_masks = _complement(mask_cubes, all_ones, num_vars, all_ones, deadline)
         timed_out = False
     except ComplementTimeout:
-        compl_cubes = []
+        compl_masks = []
         timed_out = True
+        
+    compl_cubes = [_masks_to_str(on, off, num_vars) for on, off in compl_masks]
+    
     result = Cover(
         num_inputs=cover.num_inputs,
         num_outputs=cover.num_outputs,

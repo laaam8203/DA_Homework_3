@@ -50,98 +50,55 @@ class Stats:
 
 
 # ──────────────────────────────────────────────────────────────────────
-# Core helpers
+# Bitmask helpers
 # ──────────────────────────────────────────────────────────────────────
 
-def _column(cubes: List[str], var: int) -> Tuple[int, int, int]:
-    """Return (count_0, count_1, count_dc) for variable *var*."""
-    c0 = c1 = cd = 0
-    for cube in cubes:
-        ch = cube[var]
-        if ch == '0':
-            c0 += 1
-        elif ch == '1':
-            c1 += 1
-        else:
-            cd += 1
-    return c0, c1, cd
+def _str_to_masks(s: str, n: int) -> Tuple[int, int]:
+    m1 = 0; m0 = 0
+    for ch in s:
+        m1 <<= 1; m0 <<= 1
+        if ch == '1':   m1 |= 1
+        elif ch == '0': m0 |= 1
+        else:           m1 |= 1; m0 |= 1
+    return m1, m0
 
+def _masks_to_str(m1: int, m0: int, n: int) -> str:
+    chars = []
+    for i in range(n):
+        shift = n - 1 - i
+        b1 = (m1 >> shift) & 1
+        b0 = (m0 >> shift) & 1
+        if b1 and b0:   chars.append('-')
+        elif b1:        chars.append('1')
+        elif b0:        chars.append('0')
+        else:           chars.append('0')  # Fallback valid state
+    return ''.join(chars)
 
-def _is_unate(cubes: List[str], num_vars: int) -> bool:
-    """A cover is unate if every variable appears in only one polarity
-    (positive or negative) across all cubes – don't-cares are allowed."""
-    for v in range(num_vars):
-        c0, c1, _ = _column(cubes, v)
-        if c0 > 0 and c1 > 0:
-            return False
-    return True
-
-
-def _has_all_dc_row(cubes: List[str]) -> bool:
-    """True if some cube is all don't-cares (covers the entire space)."""
-    return any(all(ch == '-' for ch in c) for c in cubes)
-
-
-def _cofactor(cubes: List[str], var: int, val: str) -> List[str]:
-    """
-    Cofactor the cube list with respect to variable *var* = *val*.
-    val is '0' or '1'.
-    - Cubes with the *opposite* literal in that column are removed.
-    - Remaining cubes have that column replaced by '-'.
-    """
-    opp = '1' if val == '0' else '0'
-    result = []
-    for cube in cubes:
-        ch = cube[var]
-        if ch == opp:
-            continue  # cube disappears
-        # Replace column with '-'
-        new_cube = cube[:var] + '-' + cube[var + 1:]
-        result.append(new_cube)
-    return result
-
-
-def _pick_binate_variable(cubes: List[str], num_vars: int) -> int:
-    """
-    Choose the most binate variable for splitting.
-    Heuristic: pick the binate variable whose column has the most
-    literals (i.e. fewest don't-cares → most constraining).
-    Among ties, pick the one closest to balanced (|c1 - c0| minimal).
-    """
-    best_var = -1
-    best_literal_count = -1
-    best_balance = float('inf')
-
-    for v in range(num_vars):
-        c0, c1, cd = _column(cubes, v)
-        if c0 == 0 or c1 == 0:
-            continue  # unate variable – skip
-        literal_count = c0 + c1
-        balance = abs(c1 - c0)
-        if (literal_count > best_literal_count or
-                (literal_count == best_literal_count and balance < best_balance)):
-            best_var = v
-            best_literal_count = literal_count
-            best_balance = balance
-
-    return best_var
-
-
-# ──────────────────────────────────────────────────────────────────────
-# Unate tautology check (base case for unate covers)
-# ──────────────────────────────────────────────────────────────────────
-
-def _unate_tautology(cubes: List[str], num_vars: int) -> bool:
-    """
-    For a *unate* cover the tautology check is simple:
-    the cover is a tautology iff it contains a cube that is all
-    don't-cares (i.e. covers the whole space).
-
-    More precisely, a unate cover F is a tautology iff there exists a
-    cube that has '-' in every *essential* column.  But the simplest
-    correct check is: the cover contains a row of all '-'.
-    """
-    return _has_all_dc_row(cubes)
+def _remove_contained_cubes(cubes: List[Tuple[int, int]], all_ones: int) -> List[Tuple[int, int]]:
+    """Remove cubes that are fully subsumed (contained) by another cube."""
+    n = len(cubes)
+    if n <= 1: return cubes
+    
+    processed = []
+    for on, off in cubes:
+        care = (on ^ off) & all_ones
+        processed.append((care.bit_count(), care, on, off))
+        
+    # Sort placing largest cubes (fewest care bits) first to maximize early subsumption
+    processed.sort(key=lambda x: x[0])
+    
+    keep = []
+    for bc_i, care_i, on_i, off_i in processed:
+        is_subsumed = False
+        # Only need to check against larger cubes already in keep
+        for care_j, on_j, off_j in keep:
+            if (care_j & ~care_i) == 0 and (on_j & care_j) == (on_i & care_j):
+                is_subsumed = True
+                break
+        if not is_subsumed:
+            keep.append((care_i, on_i, off_i))
+            
+    return [(on, off) for care, on, off in keep]
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -149,104 +106,102 @@ def _unate_tautology(cubes: List[str], num_vars: int) -> bool:
 # ──────────────────────────────────────────────────────────────────────
 
 def _tautology_check(
-    cubes: List[str],
+    cubes: List[Tuple[int, int]],
+    active_vars: int,
     num_vars: int,
+    all_ones: int,
     stats: Stats,
     depth: int,
     deadline: float = 0,
-) -> Tuple[bool, Optional[str]]:
-    """
-    Recursive tautology check using URP.
-
-    Returns
-    -------
-    (is_tautology, witness_or_None)
-        If is_tautology is False, *witness* is a minterm string of
-        length num_vars (all '0'/'1') that is NOT covered.
-    """
+) -> Tuple[bool, int, int]:
     stats.max_depth = max(stats.max_depth, depth)
 
-    # ── Base cases ────────────────────────────────────────────────────
-
-    # 1. Empty cover → not a tautology.  Any point is a witness.
     if not cubes:
         stats.base_case_not_tautology += 1
-        return False, '0' * num_vars
+        return False, 0, all_ones  # minterm with all 0s
 
-    # 2. If any cube is all don't-cares → tautology.
-    if _has_all_dc_row(cubes):
-        stats.base_case_tautology += 1
-        return True, None
-
-    # 3. If a column is all '0' or all '1' (no don't-care, no opposite),
-    #    that means every cube restricts that variable to one value,
-    #    so the opposite value is never covered → not a tautology.
-    for v in range(num_vars):
-        c0, c1, cd = _column(cubes, v)
-        if c1 == 0 and cd == 0:
-            # Every cube has '0' in column v → value '1' is uncovered
-            stats.base_case_not_tautology += 1
-            witness = list('0' * num_vars)
-            witness[v] = '1'
-            return False, ''.join(witness)
-        if c0 == 0 and cd == 0:
-            # Every cube has '1' in column v → value '0' is uncovered
-            stats.base_case_not_tautology += 1
-            witness = list('0' * num_vars)
-            witness[v] = '0'
-            return False, ''.join(witness)
-
-    # ── Unate check ───────────────────────────────────────────────────
-    if _is_unate(cubes, num_vars):
-        stats.unate_reductions += 1
-        if _unate_tautology(cubes, num_vars):
+    for on, off in cubes:
+        if on == all_ones and off == all_ones:
             stats.base_case_tautology += 1
-            return True, None
-        else:
-            stats.base_case_not_tautology += 1
-            # Build witness: for each variable pick the value that does
-            # NOT appear (the "missing" polarity).  If a variable only
-            # appears as '1' (positive unate), then '0' is missing and
-            # we set witness to '0'.  If only '0' or '-', set witness='0'
-            # as a safe default.
-            witness = []
-            for v in range(num_vars):
-                c0, c1, cd = _column(cubes, v)
-                if c1 > 0 and c0 == 0:
-                    witness.append('0')  # positive unate → '0' not covered
-                elif c0 > 0 and c1 == 0:
-                    witness.append('1')  # negative unate → '1' not covered
-                else:
-                    witness.append('0')  # all dc
-            return False, ''.join(witness)
+            return True, 0, 0
 
-    # ── Binate split (Shannon expansion) ──────────────────────────────
-    # Check timeout before expensive recursive calls
+    if active_vars == 0:
+        stats.base_case_not_tautology += 1
+        return False, 0, all_ones
+
+    cubes = _remove_contained_cubes(cubes, all_ones)
+
+    # Recheck all-dc within active vars
+    for on, off in cubes:
+        care = (on ^ off) & all_ones
+        if care & active_vars == 0:
+            stats.base_case_tautology += 1
+            return True, 0, 0
+
+    best_var = -1
+    best_score = -1
+    best_balance = float('inf')
+    is_unate = True
+    n_c = len(cubes)
+
+    for v in range(num_vars):
+        vbit = 1 << (num_vars - 1 - v)
+        if not (active_vars & vbit): continue
+        c1 = sum(1 for on, off in cubes if (on & vbit) and not (off & vbit))
+        c0 = sum(1 for on, off in cubes if (off & vbit) and not (on & vbit))
+        cd = n_c - c1 - c0
+
+        if c1 == 0 and cd == 0:
+            stats.base_case_not_tautology += 1
+            return False, vbit, all_ones & ~vbit
+        if c0 == 0 and cd == 0:
+            stats.base_case_not_tautology += 1
+            return False, all_ones & ~vbit, vbit
+
+        if c0 > 0 and c1 > 0:
+            is_unate = False
+            score = c0 + c1
+            bal = abs(c1 - c0)
+            if score > best_score or (score == best_score and bal < best_balance):
+                best_var = v; best_score = score; best_balance = bal
+
+    if is_unate:
+        stats.unate_reductions += 1
+        stats.base_case_not_tautology += 1
+        w1=0; w0=0
+        for v in range(num_vars):
+            vbit = 1 << (num_vars - 1 - v)
+            if not (active_vars & vbit):
+                w0 |= vbit; continue
+            c1 = any((on & vbit) and not (off & vbit) for on, off in cubes)
+            c0 = any((off & vbit) and not (on & vbit) for on, off in cubes)
+            if c1 and not c0: w0 |= vbit
+            elif c0 and not c1: w1 |= vbit
+            else: w0 |= vbit
+        return False, w1, w0
+
     if deadline and time.perf_counter() > deadline:
         raise TautologyTimeout()
 
-    var = _pick_binate_variable(cubes, num_vars)
+    assert best_var >= 0
     stats.binate_splits += 1
+    vbit = 1 << (num_vars - 1 - best_var)
+    new_active = active_vars & ~vbit
 
-    # Positive cofactor (var = 1)
-    pos_cubes = _cofactor(cubes, var, '1')
-    is_taut_pos, witness_pos = _tautology_check(pos_cubes, num_vars, stats, depth + 1, deadline)
-    if not is_taut_pos:
-        # Witness from positive cofactor: set var = 1
-        w = list(witness_pos)
-        w[var] = '1'
-        return False, ''.join(w)
+    # pos cofactor (vbit = 1) -> remove if cube needs 0
+    pos_cubes = list(set((on | vbit, off | vbit) for on, off in cubes if not ((off & vbit) and not (on & vbit))))
+    is_taut_p, wp1, wp0 = _tautology_check(pos_cubes, new_active, num_vars, all_ones, stats, depth + 1, deadline)
+    if not is_taut_p:
+        wp1 |= vbit; wp0 &= ~vbit
+        return False, wp1, wp0
 
-    # Negative cofactor (var = 0)
-    neg_cubes = _cofactor(cubes, var, '0')
-    is_taut_neg, witness_neg = _tautology_check(neg_cubes, num_vars, stats, depth + 1, deadline)
-    if not is_taut_neg:
-        # Witness from negative cofactor: set var = 0
-        w = list(witness_neg)
-        w[var] = '0'
-        return False, ''.join(w)
+    neg_cubes = list(set((on | vbit, off | vbit) for on, off in cubes if not ((on & vbit) and not (off & vbit))))
+    is_taut_n, wn1, wn0 = _tautology_check(neg_cubes, new_active, num_vars, all_ones, stats, depth + 1, deadline)
+    if not is_taut_n:
+        wn1 &= ~vbit; wn0 |= vbit
+        return False, wn1, wn0
 
-    return True, None
+    return True, 0, 0
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -259,17 +214,17 @@ def check_tautology(
 ) -> Tuple[bool, Optional[str], Stats]:
     """
     Check whether *cover* is a tautology.
-
-    Returns
-    -------
-    (is_tautology, witness_cube_or_None, stats)
     """
     stats = Stats()
+    num_vars = cover.num_inputs
+    all_ones = (1 << num_vars) - 1
+    mask_cubes = [_str_to_masks(c, num_vars) for c in cover.cubes]
     deadline = time.perf_counter() + timeout if timeout else 0
     try:
-        is_taut, witness = _tautology_check(
-            cover.cubes, cover.num_inputs, stats, depth=0, deadline=deadline
+        is_taut, w1, w0 = _tautology_check(
+            mask_cubes, all_ones, num_vars, all_ones, stats, 0, deadline
         )
+        witness = _masks_to_str(w1, w0, num_vars) if not is_taut else None
     except TautologyTimeout:
         stats.timed_out = True
         return False, None, stats
