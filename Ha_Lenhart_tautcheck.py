@@ -31,6 +31,14 @@ from espresso_parser import Cover, parse_cover, write_cover, get_output_path
 # Instrumentation
 # ──────────────────────────────────────────────────────────────────────
 
+TAUTCHECK_TIMEOUT = 15 * 60  # 15 minutes in seconds
+
+
+class TautologyTimeout(Exception):
+    """Raised when the tautology check exceeds its time limit."""
+    pass
+
+
 @dataclass
 class Stats:
     max_depth: int = 0
@@ -38,6 +46,7 @@ class Stats:
     base_case_not_tautology: int = 0 # not-tautology detected by base-case rules
     unate_reductions: int = 0
     binate_splits: int = 0
+    timed_out: bool = False
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -144,6 +153,7 @@ def _tautology_check(
     num_vars: int,
     stats: Stats,
     depth: int,
+    deadline: float = 0,
 ) -> Tuple[bool, Optional[str]]:
     """
     Recursive tautology check using URP.
@@ -211,12 +221,16 @@ def _tautology_check(
             return False, ''.join(witness)
 
     # ── Binate split (Shannon expansion) ──────────────────────────────
+    # Check timeout before expensive recursive calls
+    if deadline and time.perf_counter() > deadline:
+        raise TautologyTimeout()
+
     var = _pick_binate_variable(cubes, num_vars)
     stats.binate_splits += 1
 
     # Positive cofactor (var = 1)
     pos_cubes = _cofactor(cubes, var, '1')
-    is_taut_pos, witness_pos = _tautology_check(pos_cubes, num_vars, stats, depth + 1)
+    is_taut_pos, witness_pos = _tautology_check(pos_cubes, num_vars, stats, depth + 1, deadline)
     if not is_taut_pos:
         # Witness from positive cofactor: set var = 1
         w = list(witness_pos)
@@ -225,7 +239,7 @@ def _tautology_check(
 
     # Negative cofactor (var = 0)
     neg_cubes = _cofactor(cubes, var, '0')
-    is_taut_neg, witness_neg = _tautology_check(neg_cubes, num_vars, stats, depth + 1)
+    is_taut_neg, witness_neg = _tautology_check(neg_cubes, num_vars, stats, depth + 1, deadline)
     if not is_taut_neg:
         # Witness from negative cofactor: set var = 0
         w = list(witness_neg)
@@ -241,6 +255,7 @@ def _tautology_check(
 
 def check_tautology(
     cover: Cover,
+    timeout: float = TAUTCHECK_TIMEOUT,
 ) -> Tuple[bool, Optional[str], Stats]:
     """
     Check whether *cover* is a tautology.
@@ -250,9 +265,14 @@ def check_tautology(
     (is_tautology, witness_cube_or_None, stats)
     """
     stats = Stats()
-    is_taut, witness = _tautology_check(
-        cover.cubes, cover.num_inputs, stats, depth=0
-    )
+    deadline = time.perf_counter() + timeout if timeout else 0
+    try:
+        is_taut, witness = _tautology_check(
+            cover.cubes, cover.num_inputs, stats, depth=0, deadline=deadline
+        )
+    except TautologyTimeout:
+        stats.timed_out = True
+        return False, None, stats
     return is_taut, witness, stats
 
 
@@ -288,7 +308,9 @@ def main() -> None:
         elapsed = t_end - t_start
 
         # Results
-        if is_taut:
+        if stats.timed_out:
+            report.append(f"  Result    : TIMEOUT (exceeded {TAUTCHECK_TIMEOUT // 60} min)")
+        elif is_taut:
             report.append(f"  Result    : TAUTOLOGY")
         else:
             report.append(f"  Result    : NOT a tautology")
@@ -316,6 +338,8 @@ def main() -> None:
         report.append(f"  Base-case NOT taut  : {stats.base_case_not_tautology}")
         report.append(f"  Unate reductions    : {stats.unate_reductions}")
         report.append(f"  Binate splits       : {stats.binate_splits}")
+        if stats.timed_out:
+            report.append(f"  Status             : TIMED OUT")
 
         # Print to terminal
         for line in report:

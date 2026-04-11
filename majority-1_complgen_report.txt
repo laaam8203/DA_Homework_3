@@ -7,5 +7,5 @@
   Written to   : majority-1_compl
 
   -- Instrumentation --
-  Execution time : 0.000160 s
-  Peak memory    : 8.50 KB
+  Execution time : 0.000139 s
+  Peak memory    : 8.58 KB

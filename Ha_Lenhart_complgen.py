@@ -26,6 +26,14 @@ from typing import List, Tuple
 from espresso_parser import Cover, parse_cover, write_cover, get_output_path
 
 
+COMPLGEN_TIMEOUT = 60 * 60  # 1 hour in seconds
+
+
+class ComplementTimeout(Exception):
+    """Raised when complement generation exceeds its time limit."""
+    pass
+
+
 # ======================================================================
 # Core helpers (shared with tautology checker logic)
 # ======================================================================
@@ -132,7 +140,7 @@ def _and_cube_with_literal(cube: str, var: int, val: str) -> str | None:
 # Complement via URP   (F_bar = x * Fx_bar  +  x' * Fx'_bar)
 # ======================================================================
 
-def _complement(cubes: List[str], num_vars: int) -> List[str]:
+def _complement(cubes: List[str], num_vars: int, deadline: float = 0) -> List[str]:
     """
     Recursively compute the complement of *cubes*.
     Returns a list of cubes representing the complement cover.
@@ -152,16 +160,20 @@ def _complement(cubes: List[str], num_vars: int) -> List[str]:
 
     # -- Unate cover ---------------------------------------------------
     if _is_unate(cubes, num_vars):
-        return _complement_unate(cubes, num_vars)
+        return _complement_unate(cubes, num_vars, deadline)
 
     # -- Binate split (Shannon expansion) ------------------------------
+    # Check timeout before expensive recursive calls
+    if deadline and time.perf_counter() > deadline:
+        raise ComplementTimeout()
+
     var = _pick_binate_variable(cubes, num_vars)
 
     pos_cubes = _cofactor(cubes, var, '1')
     neg_cubes = _cofactor(cubes, var, '0')
 
-    compl_pos = _complement(pos_cubes, num_vars)
-    compl_neg = _complement(neg_cubes, num_vars)
+    compl_pos = _complement(pos_cubes, num_vars, deadline)
+    compl_neg = _complement(neg_cubes, num_vars, deadline)
 
     # F_bar = x_var * compl_pos  +  x_var' * compl_neg
     result = []
@@ -194,7 +206,7 @@ def _complement_single_cube(cube: str, num_vars: int) -> List[str]:
     return result
 
 
-def _complement_unate(cubes: List[str], num_vars: int) -> List[str]:
+def _complement_unate(cubes: List[str], num_vars: int, deadline: float = 0) -> List[str]:
     """
     Complement of a unate cover.
 
@@ -213,15 +225,10 @@ def _complement_unate(cubes: List[str], num_vars: int) -> List[str]:
                 break
             if c1 > 0:
                 # Positive unate in this variable
-                # F = x_v * F_xv  + F_dc  (where F_dc are cubes with '-' in col v)
-                # F_bar = x_v' * (F_dc)_bar  +  x_v * (F_xv union F_dc)_bar
-                #       = x_v' * (F_dc)_bar_restricted  + ...
-                # Simpler: cofactor approach
                 pos_cubes = _cofactor(cubes, v, '1')
                 neg_cubes = _cofactor(cubes, v, '0')
-                # neg_cubes are just the dc rows (since positive unate, no '0')
-                compl_pos = _complement(pos_cubes, num_vars)
-                compl_neg = _complement(neg_cubes, num_vars)
+                compl_pos = _complement(pos_cubes, num_vars, deadline)
+                compl_neg = _complement(neg_cubes, num_vars, deadline)
                 result = []
                 for c in compl_pos:
                     result.append(c[:v] + '1' + c[v + 1:])
@@ -232,8 +239,8 @@ def _complement_unate(cubes: List[str], num_vars: int) -> List[str]:
                 # Negative unate
                 pos_cubes = _cofactor(cubes, v, '1')
                 neg_cubes = _cofactor(cubes, v, '0')
-                compl_pos = _complement(pos_cubes, num_vars)
-                compl_neg = _complement(neg_cubes, num_vars)
+                compl_pos = _complement(pos_cubes, num_vars, deadline)
+                compl_neg = _complement(neg_cubes, num_vars, deadline)
                 result = []
                 for c in compl_pos:
                     result.append(c[:v] + '1' + c[v + 1:])
@@ -330,16 +337,26 @@ def _remove_contained(cubes: List[str]) -> List[str]:
 # Public API
 # ======================================================================
 
-def generate_complement(cover: Cover) -> Cover:
-    """Compute and return the complement of *cover* as a new Cover."""
-    compl_cubes = _complement(cover.cubes, cover.num_inputs)
-    return Cover(
+def generate_complement(cover: Cover, timeout: float = COMPLGEN_TIMEOUT) -> Cover:
+    """Compute and return the complement of *cover* as a new Cover.
+    Returns a Cover with an empty cube list if the operation times out.
+    """
+    deadline = time.perf_counter() + timeout if timeout else 0
+    try:
+        compl_cubes = _complement(cover.cubes, cover.num_inputs, deadline)
+        timed_out = False
+    except ComplementTimeout:
+        compl_cubes = []
+        timed_out = True
+    result = Cover(
         num_inputs=cover.num_inputs,
         num_outputs=cover.num_outputs,
         input_labels=cover.input_labels,
         output_labels=cover.output_labels,
         cubes=compl_cubes,
     )
+    result._timed_out = timed_out
+    return result
 
 
 # ======================================================================
@@ -365,6 +382,7 @@ def main() -> None:
         t_start = time.perf_counter()
 
         compl = generate_complement(cover)
+        timed_out = getattr(compl, '_timed_out', False)
 
         t_end = time.perf_counter()
         _, peak_mem = tracemalloc.get_traced_memory()
@@ -372,18 +390,22 @@ def main() -> None:
 
         elapsed = t_end - t_start
 
-        # Write complement file
-        out_path = get_output_path(filepath, "_compl", "Complgen-Results")
-        write_cover(compl, out_path)
-
-        report.append(f"  Output cubes : {compl.num_cubes}")
-        report.append(f"  Written to   : {out_path}")
+        if timed_out:
+            report.append(f"  Result       : TIMEOUT (exceeded {COMPLGEN_TIMEOUT // 60} min)")
+        else:
+            # Write complement file
+            out_path = get_output_path(filepath, "_compl", "Complgen-Results")
+            write_cover(compl, out_path)
+            report.append(f"  Output cubes : {compl.num_cubes}")
+            report.append(f"  Written to   : {out_path}")
 
         # Stats
         report.append(f"")
         report.append(f"  -- Instrumentation --")
         report.append(f"  Execution time : {elapsed:.6f} s")
         report.append(f"  Peak memory    : {peak_mem / 1024:.2f} KB")
+        if timed_out:
+            report.append(f"  Status         : TIMED OUT")
 
         # Print to terminal
         for line in report:
