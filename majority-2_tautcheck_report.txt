@@ -8,10 +8,10 @@
   Witness written to: majority-2_off_cube
 
   -- Instrumentation --
-  Execution time     : 0.000251 s
-  Peak memory        : 1.90 KB
-  Max recursion depth : 1
-  Base-case tautology : 0
+  Execution time     : 0.000110 s
+  Peak memory        : 3.12 KB
+  Max recursion depth : 2
+  Base-case tautology : 1
   Base-case NOT taut  : 1
-  Unate reductions    : 1
-  Binate splits       : 1
+  Unate reductions    : 0
+  Binate splits       : 2
