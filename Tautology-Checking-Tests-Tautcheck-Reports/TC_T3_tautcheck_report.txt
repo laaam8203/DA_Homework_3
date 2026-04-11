@@ -1,0 +1,16 @@
+============================================================
+  Tautology Check: TC_T3
+============================================================
+  Variables : 100
+  Cubes     : 100000
+  Result    : TIMEOUT (exceeded 15 min)
+
+  -- Instrumentation --
+  Execution time     : 900.149337 s
+  Peak memory        : 283646.86 KB
+  Max recursion depth : 30
+  Base-case tautology : 5949435
+  Base-case NOT taut  : 0
+  Unate reductions    : 0
+  Binate splits       : 5949444
+  Status             : TIMED OUT

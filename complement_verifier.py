@@ -90,31 +90,17 @@ def verify_complement(f: Cover, g: Cover) -> bool:
 
     passed = True
 
-    # Check 1: G . F = 0  (intersection must not be a tautology;
-    #           actually the intersection must be EMPTY, i.e. cover
-    #           no minterms at all.  We check: is the intersection
-    #           a tautology?  If yes, that's wrong.  But we actually
-    #           need: is the intersection == 0?  i.e. the complement
-    #           of the intersection is a tautology.)
+    # Check 1: G . F = 0
     print("\n  Check 1: F intersect G = empty?")
     fg_inter = _intersect_covers(f, g)
     if fg_inter.num_cubes == 0:
         print("    PASS - Intersection is empty (no cubes).")
     else:
-        # The intersection has cubes, but they might all be empty.
-        # Check if complement of intersection is a tautology.
-        # Actually simpler: pick any minterm from the intersection as witness.
-        # But for correctness, check if the intersection covers anything
-        # by checking: is it NOT the case that complement(intersection) is taut?
-        # Actually if intersection has cubes, at least one cube is non-empty,
-        # so intersection covers at least one minterm -> NOT complements.
-        # Wait, that's only true if the cubes are valid (they are, since
-        # _and_cube returns None for empty intersections).
         print(f"    FAIL - Intersection has {fg_inter.num_cubes} cubes.")
         print(f"    Witness (from intersection): {fg_inter.cubes[0]}")
         passed = False
 
-    # Check 2: G + F = 1  (union must be a tautology)
+    # Check 2: G + F = 1
     print("\n  Check 2: F union G = tautology?")
     fg_union = _union_covers(f, g)
     is_taut, witness, _ = check_tautology(fg_union)

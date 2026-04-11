@@ -1,0 +1,11 @@
+============================================================
+  Complement Generation: TC_T2
+============================================================
+  Variables    : 50
+  Input cubes  : 10000
+  Output cubes : 0
+  Written to   : Tautology-Checking-Tests-Complgen-Results\TC_T2_compl
+
+  -- Instrumentation --
+  Execution time : 3.484528 s
+  Peak memory    : 11142.25 KB

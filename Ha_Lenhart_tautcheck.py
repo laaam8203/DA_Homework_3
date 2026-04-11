@@ -53,69 +53,36 @@ class Stats:
 # Core helpers
 # ──────────────────────────────────────────────────────────────────────
 
-def _column(cubes: List[str], var: int) -> Tuple[int, int, int]:
-    """Return (count_0, count_1, count_dc) for variable *var*."""
-    c0 = c1 = cd = 0
-    for cube in cubes:
-        ch = cube[var]
-        if ch == '0':
-            c0 += 1
-        elif ch == '1':
-            c1 += 1
-        else:
-            cd += 1
-    return c0, c1, cd
+def _has_all_dc_row(cubes: List[str], num_vars: int) -> bool:
+    return ('-' * num_vars) in cubes
 
+def _get_columns(cubes: List[str]) -> List[Tuple[str, ...]]:
+    return list(zip(*cubes))
 
-def _is_unate(cubes: List[str], num_vars: int) -> bool:
-    """A cover is unate if every variable appears in only one polarity
-    (positive or negative) across all cubes – don't-cares are allowed."""
-    for v in range(num_vars):
-        c0, c1, _ = _column(cubes, v)
-        if c0 > 0 and c1 > 0:
+def _is_unate_fast(cols: List[Tuple[str, ...]]) -> bool:
+    for col in cols:
+        if '0' in col and '1' in col:
             return False
     return True
 
-
-def _has_all_dc_row(cubes: List[str]) -> bool:
-    """True if some cube is all don't-cares (covers the entire space)."""
-    return any(all(ch == '-' for ch in c) for c in cubes)
-
-
 def _cofactor(cubes: List[str], var: int, val: str) -> List[str]:
-    """
-    Cofactor the cube list with respect to variable *var* = *val*.
-    val is '0' or '1'.
-    - Cubes with the *opposite* literal in that column are removed.
-    - Remaining cubes have that column replaced by '-'.
-    """
     opp = '1' if val == '0' else '0'
-    result = []
-    for cube in cubes:
-        ch = cube[var]
-        if ch == opp:
-            continue  # cube disappears
-        # Replace column with '-'
-        new_cube = cube[:var] + '-' + cube[var + 1:]
-        result.append(new_cube)
-    return result
+    return [c[:var] + '-' + c[var + 1:] for c in cubes if c[var] != opp]
 
-
-def _pick_binate_variable(cubes: List[str], num_vars: int) -> int:
-    """
-    Choose the most binate variable for splitting.
-    Heuristic: pick the binate variable whose column has the most
-    literals (i.e. fewest don't-cares → most constraining).
-    Among ties, pick the one closest to balanced (|c1 - c0| minimal).
-    """
+def _pick_binate_variable(cols: List[Tuple[str, ...]], num_vars: int) -> int:
     best_var = -1
     best_literal_count = -1
     best_balance = float('inf')
 
     for v in range(num_vars):
-        c0, c1, cd = _column(cubes, v)
-        if c0 == 0 or c1 == 0:
-            continue  # unate variable – skip
+        col = cols[v]
+        c0 = col.count('0')
+        if c0 == 0:
+            continue
+        c1 = col.count('1')
+        if c1 == 0:
+            continue
+            
         literal_count = c0 + c1
         balance = abs(c1 - c0)
         if (literal_count > best_literal_count or
@@ -126,24 +93,6 @@ def _pick_binate_variable(cubes: List[str], num_vars: int) -> int:
 
     return best_var
 
-
-# ──────────────────────────────────────────────────────────────────────
-# Unate tautology check (base case for unate covers)
-# ──────────────────────────────────────────────────────────────────────
-
-def _unate_tautology(cubes: List[str], num_vars: int) -> bool:
-    """
-    For a *unate* cover the tautology check is simple:
-    the cover is a tautology iff it contains a cube that is all
-    don't-cares (i.e. covers the whole space).
-
-    More precisely, a unate cover F is a tautology iff there exists a
-    cube that has '-' in every *essential* column.  But the simplest
-    correct check is: the cover contains a row of all '-'.
-    """
-    return _has_all_dc_row(cubes)
-
-
 # ──────────────────────────────────────────────────────────────────────
 # Main recursive tautology checker
 # ──────────────────────────────────────────────────────────────────────
@@ -153,95 +102,77 @@ def _tautology_check(
     num_vars: int,
     stats: Stats,
     depth: int,
-    deadline: float = 0,
+    deadline: float,
+    iterations: List[int]
 ) -> Tuple[bool, Optional[str]]:
-    """
-    Recursive tautology check using URP.
-
-    Returns
-    -------
-    (is_tautology, witness_or_None)
-        If is_tautology is False, *witness* is a minterm string of
-        length num_vars (all '0'/'1') that is NOT covered.
-    """
+    
     stats.max_depth = max(stats.max_depth, depth)
 
-    # ── Base cases ────────────────────────────────────────────────────
+    iterations[0] += 1
+    if (iterations[0] & 1023) == 0 and deadline and time.perf_counter() > deadline:
+        raise TautologyTimeout()
 
-    # 1. Empty cover → not a tautology.  Any point is a witness.
     if not cubes:
         stats.base_case_not_tautology += 1
         return False, '0' * num_vars
 
-    # 2. If any cube is all don't-cares → tautology.
-    if _has_all_dc_row(cubes):
+    if ('-' * num_vars) in cubes:
         stats.base_case_tautology += 1
         return True, None
 
-    # 3. If a column is all '0' or all '1' (no don't-care, no opposite),
-    #    that means every cube restricts that variable to one value,
-    #    so the opposite value is never covered → not a tautology.
+    cols = list(zip(*cubes))
+
     for v in range(num_vars):
-        c0, c1, cd = _column(cubes, v)
-        if c1 == 0 and cd == 0:
-            # Every cube has '0' in column v → value '1' is uncovered
+        col = cols[v]
+        if '1' not in col and '-' not in col:
             stats.base_case_not_tautology += 1
-            witness = list('0' * num_vars)
-            witness[v] = '1'
-            return False, ''.join(witness)
-        if c0 == 0 and cd == 0:
-            # Every cube has '1' in column v → value '0' is uncovered
+            w = list('0' * num_vars)
+            w[v] = '1'
+            return False, ''.join(w)
+        if '0' not in col and '-' not in col:
             stats.base_case_not_tautology += 1
-            witness = list('0' * num_vars)
-            witness[v] = '0'
-            return False, ''.join(witness)
+            w = list('0' * num_vars)
+            w[v] = '0'
+            return False, ''.join(w)
 
     # ── Unate check ───────────────────────────────────────────────────
-    if _is_unate(cubes, num_vars):
+    is_unate = True
+    for col in cols:
+        if '0' in col and '1' in col:
+            is_unate = False
+            break
+
+    if is_unate:
         stats.unate_reductions += 1
-        if _unate_tautology(cubes, num_vars):
-            stats.base_case_tautology += 1
-            return True, None
-        else:
-            stats.base_case_not_tautology += 1
-            # Build witness: for each variable pick the value that does
-            # NOT appear (the "missing" polarity).  If a variable only
-            # appears as '1' (positive unate), then '0' is missing and
-            # we set witness to '0'.  If only '0' or '-', set witness='0'
-            # as a safe default.
-            witness = []
-            for v in range(num_vars):
-                c0, c1, cd = _column(cubes, v)
-                if c1 > 0 and c0 == 0:
-                    witness.append('0')  # positive unate → '0' not covered
-                elif c0 > 0 and c1 == 0:
-                    witness.append('1')  # negative unate → '1' not covered
-                else:
-                    witness.append('0')  # all dc
-            return False, ''.join(witness)
+        stats.base_case_not_tautology += 1
+        witness = []
+        for v in range(num_vars):
+            col = cols[v]
+            if '1' in col and '0' not in col:
+                witness.append('0')
+            elif '0' in col and '1' not in col:
+                witness.append('1')
+            else:
+                witness.append('0')
+        return False, ''.join(witness)
 
     # ── Binate split (Shannon expansion) ──────────────────────────────
-    # Check timeout before expensive recursive calls
-    if deadline and time.perf_counter() > deadline:
-        raise TautologyTimeout()
-
-    var = _pick_binate_variable(cubes, num_vars)
     stats.binate_splits += 1
 
+    var = _pick_binate_variable(cols, num_vars)
+
     # Positive cofactor (var = 1)
-    pos_cubes = _cofactor(cubes, var, '1')
-    is_taut_pos, witness_pos = _tautology_check(pos_cubes, num_vars, stats, depth + 1, deadline)
+    pos_cubes = [c[:var] + '-' + c[var + 1:] for c in cubes if c[var] != '0']
+    is_taut_pos, witness_pos = _tautology_check(pos_cubes, num_vars, stats, depth + 1, deadline, iterations)
     if not is_taut_pos:
-        # Witness from positive cofactor: set var = 1
         w = list(witness_pos)
         w[var] = '1'
         return False, ''.join(w)
 
     # Negative cofactor (var = 0)
-    neg_cubes = _cofactor(cubes, var, '0')
-    is_taut_neg, witness_neg = _tautology_check(neg_cubes, num_vars, stats, depth + 1, deadline)
+    neg_cubes = [c[:var] + '-' + c[var + 1:] for c in cubes if c[var] != '1']
+    is_taut_neg, witness_neg = _tautology_check(neg_cubes, num_vars, stats, depth + 1, deadline, iterations)
     if not is_taut_neg:
-        # Witness from negative cofactor: set var = 0
         w = list(witness_neg)
         w[var] = '0'
         return False, ''.join(w)
@@ -257,22 +188,19 @@ def check_tautology(
     cover: Cover,
     timeout: float = TAUTCHECK_TIMEOUT,
 ) -> Tuple[bool, Optional[str], Stats]:
-    """
-    Check whether *cover* is a tautology.
-
-    Returns
-    -------
-    (is_tautology, witness_cube_or_None, stats)
-    """
+    
     stats = Stats()
     deadline = time.perf_counter() + timeout if timeout else 0
+    iterations = [0]
+    
     try:
         is_taut, witness = _tautology_check(
-            cover.cubes, cover.num_inputs, stats, depth=0, deadline=deadline
+            cover.cubes, cover.num_inputs, stats, depth=0, deadline=deadline, iterations=iterations
         )
     except TautologyTimeout:
         stats.timed_out = True
         return False, None, stats
+        
     return is_taut, witness, stats
 
 
@@ -282,10 +210,22 @@ def check_tautology(
 
 def main() -> None:
     if len(sys.argv) < 2:
-        print("Usage: python Ha_Lenhart_tautcheck.py <cover_file> [<cover_file2> ...]")
+        print("Usage: python Ha_Lenhart_tautcheck.py <path_to_file_or_folder> [<path2> ...]")
         sys.exit(1)
 
-    for filepath in sys.argv[1:]:
+    targets = []
+    for arg_path in sys.argv[1:]:
+        if os.path.isdir(arg_path):
+            for file in os.listdir(arg_path):
+                full_path = os.path.join(arg_path, file)
+                if os.path.isfile(full_path) and not file.startswith('.'):
+                    targets.append(full_path)
+        elif os.path.isfile(arg_path):
+            targets.append(arg_path)
+        else:
+            print(f"Skipping invalid path: {arg_path}")
+
+    for filepath in targets:
         report = []
         report.append(f"{'='*60}")
         report.append(f"  Tautology Check: {os.path.basename(filepath)}")
