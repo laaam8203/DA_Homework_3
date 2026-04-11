@@ -136,6 +136,8 @@ def _tautology_check(
             return False, ''.join(w)
 
     # ── Unate check ───────────────────────────────────────────────────
+    # If the entire cover is unate and lacks the universal cube,
+    # it is NOT a tautology.
     is_unate = True
     for col in cols:
         if '0' in col and '1' in col:
@@ -155,6 +157,36 @@ def _tautology_check(
             else:
                 witness.append('0')
         return False, ''.join(witness)
+
+    # ── Unate variable cofactoring ────────────────────────────────────
+    # If variable x is unate, we only need ONE cofactor instead of two:
+    #   Positive-unate (only 1/-): F≡1 iff F_x̄ ≡ 1
+    #   Negative-unate (only 0/-): F≡1 iff F_x  ≡ 1
+    # This halves the recursion tree at each unate variable.
+    for v in range(num_vars):
+        col = cols[v]
+        has_0 = '0' in col
+        has_1 = '1' in col
+        if has_1 and not has_0:
+            # Positive unate: only need negative cofactor
+            stats.unate_reductions += 1
+            neg_cubes = [c[:v] + '-' + c[v + 1:] for c in cubes if c[v] != '1']
+            is_taut, witness = _tautology_check(neg_cubes, num_vars, stats, depth + 1, deadline, iterations)
+            if not is_taut:
+                w = list(witness)
+                w[v] = '0'
+                return False, ''.join(w)
+            return True, None
+        elif has_0 and not has_1:
+            # Negative unate: only need positive cofactor
+            stats.unate_reductions += 1
+            pos_cubes = [c[:v] + '-' + c[v + 1:] for c in cubes if c[v] != '0']
+            is_taut, witness = _tautology_check(pos_cubes, num_vars, stats, depth + 1, deadline, iterations)
+            if not is_taut:
+                w = list(witness)
+                w[v] = '1'
+                return False, ''.join(w)
+            return True, None
 
     # ── Binate split (Shannon expansion) ──────────────────────────────
     stats.binate_splits += 1

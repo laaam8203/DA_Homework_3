@@ -3,5 +3,5 @@
 .p 1
 .ilb a b c
 .ob out
-001 1
+000 1
 .e

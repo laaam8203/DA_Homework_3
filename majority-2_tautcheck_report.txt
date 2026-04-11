@@ -4,14 +4,14 @@
   Variables : 3
   Cubes     : 5
   Result    : NOT a tautology
-  Witness   : 001
+  Witness   : 000
   Witness written to: majority-2_off_cube
 
   -- Instrumentation --
-  Execution time     : 0.000224 s
-  Peak memory        : 1.97 KB
-  Max recursion depth : 2
-  Base-case tautology : 1
+  Execution time     : 0.000098 s
+  Peak memory        : 1.95 KB
+  Max recursion depth : 1
+  Base-case tautology : 0
   Base-case NOT taut  : 1
-  Unate reductions    : 0
-  Binate splits       : 2
+  Unate reductions    : 1
+  Binate splits       : 0
