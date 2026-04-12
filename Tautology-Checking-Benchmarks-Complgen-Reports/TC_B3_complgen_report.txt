@@ -7,6 +7,6 @@
   Written to   : Tautology-Checking-Benchmarks-Complgen-Results/TC_B3_compl
 
   -- Instrumentation --
-  Execution time : 1.037694 s
-  Peak memory    : 4852.16 KB
+  Execution time : 0.942588 s
+  Peak memory    : 4841.00 KB
 
