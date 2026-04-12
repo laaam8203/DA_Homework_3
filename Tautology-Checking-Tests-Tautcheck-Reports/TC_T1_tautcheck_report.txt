@@ -6,10 +6,10 @@
   Result    : TAUTOLOGY
 
   -- Instrumentation --
-  Execution time     : 0.663599 s
-  Peak memory        : 158.33 KB
-  Max recursion depth : 17
+  Execution time     : 0.622722 s
+  Peak memory        : 159.09 KB
+  Max recursion depth : 16
   Base-case tautology : 1686
   Base-case NOT taut  : 0
-  Unate reductions    : 2170
+  Unate reductions    : 1257
   Binate splits       : 1685

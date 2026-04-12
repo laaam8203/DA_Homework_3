@@ -95,29 +95,42 @@ def _tautology_check(
             else: witness.append('0')
         return False, ''.join(witness)
 
-    # Unate variable cofactoring
-    for v in range(num_vars):
-        if unate_vars[v]:
-            if has_1[v]:
-                stats.unate_reductions += 1
-                neg_cubes = cubes[cubes[:, v] != 2].copy()
-                neg_cubes[:, v] = 3
-                is_taut, witness = _tautology_check(neg_cubes, num_vars, stats, depth + 1, deadline, iterations)
-                if not is_taut:
-                    w = list(witness)
-                    w[v] = '0'
-                    return False, ''.join(w)
-                return True, None
-            elif has_0[v]:
-                stats.unate_reductions += 1
-                pos_cubes = cubes[cubes[:, v] != 1].copy()
-                pos_cubes[:, v] = 3
-                is_taut, witness = _tautology_check(pos_cubes, num_vars, stats, depth + 1, deadline, iterations)
-                if not is_taut:
-                    w = list(witness)
-                    w[v] = '1'
-                    return False, ''.join(w)
-                return True, None
+    # Unate variable reduction (Multi-Variable Optimization)
+    unate_vars = ~(has_0 & has_1)
+    strictly_unate = unate_vars & (has_0 | has_1)
+    
+    if np.any(strictly_unate):
+        stats.unate_reductions += 1
+        mask = np.ones(len(cubes), dtype=bool)
+        indices = np.where(strictly_unate)[0]
+        
+        for v in indices:
+            # Positive Unate: appearing as 1 or - (has_1=True, has_0=False)
+            # We must check the space where x=0 to see if it's a tautology.
+            # So we exclude cubes that REQUIRE x=1 (v == 2).
+            if has_1[v]: 
+                mask &= (cubes[:, v] != 2)
+            # Negative Unate: appearing as 0 or - (has_0=True, has_1=False)
+            # We must check the space where x=1. Exclude cubes requiring x=0 (v == 1).
+            else:
+                mask &= (cubes[:, v] != 1)
+        
+        new_cubes = cubes[mask].copy()
+        new_cubes[:, indices] = 3
+        
+        # Periodic duplicate removal to keep the matrix lean
+        if len(new_cubes) > 1000 and (depth % 5 == 0):
+            new_cubes = np.unique(new_cubes, axis=0)
+
+        is_taut, witness = _tautology_check(new_cubes, num_vars, stats, depth + 1, deadline, iterations)
+        if not is_taut:
+            # Witness reconstruction for all unate variables
+            w = list(witness)
+            for v in indices:
+                if has_1[v]: w[v] = '0'
+                else: w[v] = '1'
+            return False, ''.join(w)
+        return True, None
 
     # Binate Split
     stats.binate_splits += 1
