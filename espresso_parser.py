@@ -1,13 +1,11 @@
 """
 espresso_parser.py
 ──────────────────
-Shared ESPRESSO PLA / cover-table parser and writer.
+Shared ESPRESSO PLA cover parser and writer.
+Encoding: '0'→1, '1'→2, '-'→3 stored as uint8 NumPy arrays.
 
-Usage (as a library):
-    from espresso_parser import Cover, parse_cover, write_cover
-
-Usage (standalone verification):
-    python espresso_parser.py <file1> [<file2> ...]
+Usage (library):    from espresso_parser import Cover, parse_cover, write_cover
+Usage (standalone): python espresso_parser.py <file1> [<file2> ...]
 """
 
 from __future__ import annotations
@@ -15,7 +13,7 @@ import os
 import sys
 import numpy as np
 from dataclasses import dataclass, field
-from typing import List, Optional, Any
+from typing import List, Optional
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -37,10 +35,9 @@ class Cover:
         Variable names from .ilb (may be empty if .ilb is absent).
     output_labels : list[str]
         Output names from .ob (may be empty if .ob is absent).
-    cubes : list[str]
-        Each element is a string of length *num_inputs* consisting of
-        characters '0', '1', or '-'.  Only cubes whose output column is
-        '1' are stored (the output value itself is implicit).
+    cubes : np.ndarray, shape (P, num_inputs), dtype uint8
+        Each row is one product term. Values: 1='0', 2='1', 3='-'.
+        Only cubes with output '1' are stored.
     """
     num_inputs: int = 0
     num_outputs: int = 0

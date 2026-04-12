@@ -3,7 +3,7 @@ Ha_Lenhart_tautcheck.py
 ───────────────────────
 Tautology Checker for ESPRESSO PLA covers.
 Uses the Unate Recursive Paradigm (URP) with Shannon cofactoring.
-Converted to Numpy Vectorized Boolean Logic Engine.
+Encoding: '0'→1, '1'→2, '-'→3 (uint8 arrays).
 
 Authors: Ha, Lenhart
 Course : VLSI Design Automation (EECE 5186C/6086C) – HW3
@@ -27,15 +27,16 @@ class TautologyTimeout(Exception):
 
 @dataclass
 class Stats:
+    """Recursive execution counters for instrumentation reporting."""
     max_depth: int = 0
-    base_case_tautology: int = 0     
-    base_case_not_tautology: int = 0 
+    base_case_tautology: int = 0
+    base_case_not_tautology: int = 0
     unate_reductions: int = 0
     binate_splits: int = 0
     timed_out: bool = False
 
 # ──────────────────────────────────────────────────────────────────────
-# Main recursive tautology checker
+# Core URP Recursion
 # ──────────────────────────────────────────────────────────────────────
 def _tautology_check(
     cubes: np.ndarray,
@@ -45,17 +46,20 @@ def _tautology_check(
     deadline: float,
     iterations: List[int]
 ) -> Tuple[bool, Optional[str]]:
-    
-    stats.max_depth = max(stats.max_depth, depth)
+    """Recursively determine if `cubes` is a tautology.
+    Returns (is_tautology, witness_string_or_None)."""
 
+    stats.max_depth = max(stats.max_depth, depth)
     iterations[0] += 1
     if (iterations[0] & 1023) == 0 and deadline and time.perf_counter() > deadline:
         raise TautologyTimeout()
 
+    # Base case: empty cover is not a tautology
     if len(cubes) == 0:
         stats.base_case_not_tautology += 1
         return False, '0' * num_vars
 
+    # Base case: universal cube ('-'*n) present → tautology
     if np.any(np.all(cubes == 3, axis=1)):
         stats.base_case_tautology += 1
         return True, None
@@ -64,26 +68,25 @@ def _tautology_check(
     c1 = np.sum(cubes == 2, axis=0)
     cd = np.sum(cubes == 3, axis=0)
 
-    # Base case columns
+    # Column shortcuts: a column with no coverage in one polarity is a trivial gap
     missing_1_dc = (c1 == 0) & (cd == 0)
     if np.any(missing_1_dc):
         stats.base_case_not_tautology += 1
         v = np.argmax(missing_1_dc)
-        w = list('0' * num_vars)
-        w[v] = '1'
+        w = list('0' * num_vars); w[v] = '1'
         return False, ''.join(w)
 
     missing_0_dc = (c0 == 0) & (cd == 0)
     if np.any(missing_0_dc):
         stats.base_case_not_tautology += 1
         v = np.argmax(missing_0_dc)
-        w = list('0' * num_vars)
-        w[v] = '0'
+        w = list('0' * num_vars); w[v] = '0'
         return False, ''.join(w)
 
     has_0 = c0 > 0
     has_1 = c1 > 0
-    
+
+    # Entirely unate cover: not a tautology (no universal cube was found above)
     unate_vars = ~(has_0 & has_1)
     if np.all(unate_vars):
         stats.unate_reductions += 1
@@ -95,84 +98,62 @@ def _tautology_check(
             else: witness.append('0')
         return False, ''.join(witness)
 
-    # Unate variable reduction (Multi-Variable Optimization)
-    unate_vars = ~(has_0 & has_1)
+    # Multi-variable unate reduction: cofactor all unate vars simultaneously.
+    # For pos-unate x_j: check x_j=0 subspace (exclude cubes requiring x_j=1).
+    # For neg-unate x_j: check x_j=1 subspace (exclude cubes requiring x_j=0).
     strictly_unate = unate_vars & (has_0 | has_1)
-    
     if np.any(strictly_unate):
         stats.unate_reductions += 1
-        mask = np.ones(len(cubes), dtype=bool)
         indices = np.where(strictly_unate)[0]
-        
+        mask = np.ones(len(cubes), dtype=bool)
         for v in indices:
-            # Positive Unate: appearing as 1 or - (has_1=True, has_0=False)
-            # We must check the space where x=0 to see if it's a tautology.
-            # So we exclude cubes that REQUIRE x=1 (v == 2).
-            if has_1[v]: 
-                mask &= (cubes[:, v] != 2)
-            # Negative Unate: appearing as 0 or - (has_0=True, has_1=False)
-            # We must check the space where x=1. Exclude cubes requiring x=0 (v == 1).
-            else:
-                mask &= (cubes[:, v] != 1)
-        
+            mask &= (cubes[:, v] != (2 if has_1[v] else 1))
         new_cubes = cubes[mask].copy()
         new_cubes[:, indices] = 3
-        
-        # Periodic duplicate removal to keep the matrix lean
-        if len(new_cubes) > 1000 and (depth % 5 == 0):
+        if len(new_cubes) > 1000 and (depth % 5 == 0):  # periodic dedup
             new_cubes = np.unique(new_cubes, axis=0)
-
         is_taut, witness = _tautology_check(new_cubes, num_vars, stats, depth + 1, deadline, iterations)
         if not is_taut:
-            # Witness reconstruction for all unate variables
             w = list(witness)
             for v in indices:
-                if has_1[v]: w[v] = '0'
-                else: w[v] = '1'
+                w[v] = '0' if has_1[v] else '1'  # reconstruct witness
             return False, ''.join(w)
         return True, None
 
-    # Binate Split
+    # Binate split: max literal count primary, min balance secondary
     stats.binate_splits += 1
-
     binate_mask = has_0 & has_1
     lit_counts = c0 + c1
     balances = np.abs(c1 - c0)
-    
     valid_lit = np.where(binate_mask, lit_counts, -1)
-    max_lit = np.max(valid_lit)
-    candidates = (valid_lit == max_lit)
-    
-    valid_balances = np.where(candidates, balances, float('inf'))
-    var = np.argmin(valid_balances)
+    candidates = (valid_lit == np.max(valid_lit))
+    var = np.argmin(np.where(candidates, balances, float('inf')))
 
-    pos_cubes = cubes[cubes[:, var] != 1].copy()
-    pos_cubes[:, var] = 3
+    pos_cubes = cubes[cubes[:, var] != 1].copy(); pos_cubes[:, var] = 3
     is_taut_pos, witness_pos = _tautology_check(pos_cubes, num_vars, stats, depth + 1, deadline, iterations)
     if not is_taut_pos:
-        w = list(witness_pos)
-        w[var] = '1'
+        w = list(witness_pos); w[var] = '1'
         return False, ''.join(w)
 
-    neg_cubes = cubes[cubes[:, var] != 2].copy()
-    neg_cubes[:, var] = 3
+    neg_cubes = cubes[cubes[:, var] != 2].copy(); neg_cubes[:, var] = 3
     is_taut_neg, witness_neg = _tautology_check(neg_cubes, num_vars, stats, depth + 1, deadline, iterations)
     if not is_taut_neg:
-        w = list(witness_neg)
-        w[var] = '0'
+        w = list(witness_neg); w[var] = '0'
         return False, ''.join(w)
 
     return True, None
 
+# ──────────────────────────────────────────────────────────────────────
+# Public API
+# ──────────────────────────────────────────────────────────────────────
 def check_tautology(
     cover: Cover,
     timeout: float = TAUTCHECK_TIMEOUT,
 ) -> Tuple[bool, Optional[str], Stats]:
-    
+    """Check if `cover` is a tautology. Returns (is_taut, witness, stats)."""
     stats = Stats()
     deadline = time.perf_counter() + timeout if timeout else 0
     iterations = [0]
-    
     try:
         is_taut, witness = _tautology_check(
             cover.cubes, cover.num_inputs, stats, depth=0, deadline=deadline, iterations=iterations
@@ -180,7 +161,6 @@ def check_tautology(
     except TautologyTimeout:
         stats.timed_out = True
         return False, None, stats
-        
     return is_taut, witness, stats
 
 
