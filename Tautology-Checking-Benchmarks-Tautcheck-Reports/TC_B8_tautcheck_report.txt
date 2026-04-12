@@ -4,12 +4,12 @@
   Variables : 50
   Cubes     : 10000
   Result    : NOT a tautology
-  Witness   : 10110010000001000000000100101000101011101000000100
+  Witness   : 00110010000001100000100100101000101011101000000100
   Witness written to: Tautology-Checking-Benchmarks-Tautcheck-Results/TC_B8_off_cube
 
   -- Instrumentation --
-  Execution time     : 0.036630 s
-  Peak memory        : 11196.82 KB
+  Execution time     : 0.004340 s
+  Peak memory        : 877.07 KB
   Max recursion depth : 14
   Base-case tautology : 0
   Base-case NOT taut  : 1

@@ -8,10 +8,10 @@
   Witness written to: Tautology-Checking-Benchmarks-Tautcheck-Results/TC_B10_off_cube
 
   -- Instrumentation --
-  Execution time     : 161.897346 s
-  Peak memory        : 277335.25 KB
-  Max recursion depth : 36
+  Execution time     : 204.750659 s
+  Peak memory        : 28174.64 KB
+  Max recursion depth : 31
   Base-case tautology : 1097790
   Base-case NOT taut  : 1
-  Unate reductions    : 1366246
+  Unate reductions    : 586043
   Binate splits       : 1097802

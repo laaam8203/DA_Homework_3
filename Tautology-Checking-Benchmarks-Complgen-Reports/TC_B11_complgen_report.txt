@@ -1,0 +1,12 @@
+============================================================
+  Complement Generation: TC_B11
+============================================================
+  Variables    : 100
+  Input cubes  : 100000
+  Output cubes : 0
+  Written to   : Tautology-Checking-Benchmarks-Complgen-Results/TC_B11_compl
+
+  -- Instrumentation --
+  Execution time : 655.946156 s
+  Peak memory    : 39059.29 KB
+

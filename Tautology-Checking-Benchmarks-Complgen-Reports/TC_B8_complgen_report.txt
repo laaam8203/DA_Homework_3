@@ -1,0 +1,12 @@
+============================================================
+  Complement Generation: TC_B8
+============================================================
+  Variables    : 50
+  Input cubes  : 10000
+  Result       : TIMEOUT (exceeded 60 min)
+  Output cubes : 0 (Partial/Invalid)
+
+  -- Instrumentation --
+  Execution time : 10525.859107 s
+  Peak memory    : 94828.72 KB
+
