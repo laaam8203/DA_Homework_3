@@ -13,8 +13,9 @@ Usage (standalone verification):
 from __future__ import annotations
 import os
 import sys
+import numpy as np
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import List, Optional, Any
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -45,7 +46,7 @@ class Cover:
     num_outputs: int = 0
     input_labels: List[str] = field(default_factory=list)
     output_labels: List[str] = field(default_factory=list)
-    cubes: List[str] = field(default_factory=list)
+    cubes: np.ndarray = field(default_factory=lambda: np.empty((0, 0), dtype=np.uint8))
 
     # Convenience ──────────────────────────────────────────────────────
 
@@ -77,6 +78,7 @@ def parse_cover(filepath: str) -> Cover:
     """
     cover = Cover()
     declared_p: Optional[int] = None  # .p value, if present
+    parsed_cubes = []
 
     with open(filepath, "r") as fh:
         for raw_line in fh:
@@ -142,7 +144,17 @@ def parse_cover(filepath: str) -> Cover:
 
             # We only store cubes with output '1'
             if output_value == "1":
-                cover.cubes.append(input_pattern)
+                row = []
+                for ch in input_pattern:
+                    if ch == '-': row.append(3)
+                    elif ch == '1': row.append(2)
+                    else: row.append(1)
+                parsed_cubes.append(row)
+
+    if parsed_cubes:
+        cover.cubes = np.array(parsed_cubes, dtype=np.uint8)
+    elif cover.num_inputs:
+        cover.cubes = np.empty((0, cover.num_inputs), dtype=np.uint8)
 
     # ── Post-parse validation ─────────────────────────────────────────
     if declared_p is not None and declared_p != cover.num_cubes:
@@ -183,8 +195,10 @@ def write_cover(cover: Cover, filepath: str) -> None:
             fh.write(f".ilb {' '.join(cover.input_labels)}\n")
         if cover.output_labels:
             fh.write(f".ob {' '.join(cover.output_labels)}\n")
+        
         for cube in cover.cubes:
-            fh.write(f"{cube} 1\n")
+            cube_str = "".join(['-' if v == 3 else '1' if v == 2 else '0' for v in cube])
+            fh.write(f"{cube_str} 1\n")
         fh.write(".e\n")
 
 

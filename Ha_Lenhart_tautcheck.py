@@ -3,14 +3,7 @@ Ha_Lenhart_tautcheck.py
 ───────────────────────
 Tautology Checker for ESPRESSO PLA covers.
 Uses the Unate Recursive Paradigm (URP) with Shannon cofactoring.
-
-Execution:
-    python Ha_Lenhart_tautcheck.py <cover_file>
-
-Output:
-    - Prints whether the cover is a tautology.
-    - If not, writes a witness (OFF-set cube) to <cover_file>_off_cube.
-    - Prints instrumentation statistics to the terminal.
+Converted to Numpy Vectorized Boolean Logic Engine.
 
 Authors: Ha, Lenhart
 Course : VLSI Design Automation (EECE 5186C/6086C) – HW3
@@ -21,84 +14,31 @@ import sys
 import os
 import time
 import tracemalloc
-from dataclasses import dataclass, field
+import numpy as np
+from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
 from espresso_parser import Cover, parse_cover, write_cover, get_output_path
 
-
-# ──────────────────────────────────────────────────────────────────────
-# Instrumentation
-# ──────────────────────────────────────────────────────────────────────
-
-TAUTCHECK_TIMEOUT = 15 * 60  # 15 minutes in seconds
-
+TAUTCHECK_TIMEOUT = 15 * 60
 
 class TautologyTimeout(Exception):
-    """Raised when the tautology check exceeds its time limit."""
     pass
-
 
 @dataclass
 class Stats:
     max_depth: int = 0
-    base_case_tautology: int = 0     # tautology detected by base-case rules
-    base_case_not_tautology: int = 0 # not-tautology detected by base-case rules
+    base_case_tautology: int = 0     
+    base_case_not_tautology: int = 0 
     unate_reductions: int = 0
     binate_splits: int = 0
     timed_out: bool = False
 
-
-# ──────────────────────────────────────────────────────────────────────
-# Core helpers
-# ──────────────────────────────────────────────────────────────────────
-
-def _has_all_dc_row(cubes: List[str], num_vars: int) -> bool:
-    return ('-' * num_vars) in cubes
-
-def _get_columns(cubes: List[str]) -> List[Tuple[str, ...]]:
-    return list(zip(*cubes))
-
-def _is_unate_fast(cols: List[Tuple[str, ...]]) -> bool:
-    for col in cols:
-        if '0' in col and '1' in col:
-            return False
-    return True
-
-def _cofactor(cubes: List[str], var: int, val: str) -> List[str]:
-    opp = '1' if val == '0' else '0'
-    return [c[:var] + '-' + c[var + 1:] for c in cubes if c[var] != opp]
-
-def _pick_binate_variable(cols: List[Tuple[str, ...]], num_vars: int) -> int:
-    best_var = -1
-    best_literal_count = -1
-    best_balance = float('inf')
-
-    for v in range(num_vars):
-        col = cols[v]
-        c0 = col.count('0')
-        if c0 == 0:
-            continue
-        c1 = col.count('1')
-        if c1 == 0:
-            continue
-            
-        literal_count = c0 + c1
-        balance = abs(c1 - c0)
-        if (literal_count > best_literal_count or
-                (literal_count == best_literal_count and balance < best_balance)):
-            best_var = v
-            best_literal_count = literal_count
-            best_balance = balance
-
-    return best_var
-
 # ──────────────────────────────────────────────────────────────────────
 # Main recursive tautology checker
 # ──────────────────────────────────────────────────────────────────────
-
 def _tautology_check(
-    cubes: List[str],
+    cubes: np.ndarray,
     num_vars: int,
     stats: Stats,
     depth: int,
@@ -112,97 +52,97 @@ def _tautology_check(
     if (iterations[0] & 1023) == 0 and deadline and time.perf_counter() > deadline:
         raise TautologyTimeout()
 
-    if not cubes:
+    if len(cubes) == 0:
         stats.base_case_not_tautology += 1
         return False, '0' * num_vars
 
-    if ('-' * num_vars) in cubes:
+    if np.any(np.all(cubes == 3, axis=1)):
         stats.base_case_tautology += 1
         return True, None
 
-    cols = list(zip(*cubes))
+    c0 = np.sum(cubes == 1, axis=0)
+    c1 = np.sum(cubes == 2, axis=0)
+    cd = np.sum(cubes == 3, axis=0)
 
-    for v in range(num_vars):
-        col = cols[v]
-        if '1' not in col and '-' not in col:
-            stats.base_case_not_tautology += 1
-            w = list('0' * num_vars)
-            w[v] = '1'
-            return False, ''.join(w)
-        if '0' not in col and '-' not in col:
-            stats.base_case_not_tautology += 1
-            w = list('0' * num_vars)
-            w[v] = '0'
-            return False, ''.join(w)
+    # Base case columns
+    missing_1_dc = (c1 == 0) & (cd == 0)
+    if np.any(missing_1_dc):
+        stats.base_case_not_tautology += 1
+        v = np.argmax(missing_1_dc)
+        w = list('0' * num_vars)
+        w[v] = '1'
+        return False, ''.join(w)
 
-    # ── Unate check ───────────────────────────────────────────────────
-    # If the entire cover is unate and lacks the universal cube,
-    # it is NOT a tautology.
-    is_unate = True
-    for col in cols:
-        if '0' in col and '1' in col:
-            is_unate = False
-            break
+    missing_0_dc = (c0 == 0) & (cd == 0)
+    if np.any(missing_0_dc):
+        stats.base_case_not_tautology += 1
+        v = np.argmax(missing_0_dc)
+        w = list('0' * num_vars)
+        w[v] = '0'
+        return False, ''.join(w)
 
-    if is_unate:
+    has_0 = c0 > 0
+    has_1 = c1 > 0
+    
+    unate_vars = ~(has_0 & has_1)
+    if np.all(unate_vars):
         stats.unate_reductions += 1
         stats.base_case_not_tautology += 1
         witness = []
         for v in range(num_vars):
-            col = cols[v]
-            if '1' in col and '0' not in col:
-                witness.append('0')
-            elif '0' in col and '1' not in col:
-                witness.append('1')
-            else:
-                witness.append('0')
+            if has_1[v] and not has_0[v]: witness.append('0')
+            elif has_0[v] and not has_1[v]: witness.append('1')
+            else: witness.append('0')
         return False, ''.join(witness)
 
-    # ── Unate variable cofactoring ────────────────────────────────────
-    # If variable x is unate, we only need ONE cofactor instead of two:
-    #   Positive-unate (only 1/-): F≡1 iff F_x̄ ≡ 1
-    #   Negative-unate (only 0/-): F≡1 iff F_x  ≡ 1
-    # This halves the recursion tree at each unate variable.
+    # Unate variable cofactoring
     for v in range(num_vars):
-        col = cols[v]
-        has_0 = '0' in col
-        has_1 = '1' in col
-        if has_1 and not has_0:
-            # Positive unate: only need negative cofactor
-            stats.unate_reductions += 1
-            neg_cubes = [c[:v] + '-' + c[v + 1:] for c in cubes if c[v] != '1']
-            is_taut, witness = _tautology_check(neg_cubes, num_vars, stats, depth + 1, deadline, iterations)
-            if not is_taut:
-                w = list(witness)
-                w[v] = '0'
-                return False, ''.join(w)
-            return True, None
-        elif has_0 and not has_1:
-            # Negative unate: only need positive cofactor
-            stats.unate_reductions += 1
-            pos_cubes = [c[:v] + '-' + c[v + 1:] for c in cubes if c[v] != '0']
-            is_taut, witness = _tautology_check(pos_cubes, num_vars, stats, depth + 1, deadline, iterations)
-            if not is_taut:
-                w = list(witness)
-                w[v] = '1'
-                return False, ''.join(w)
-            return True, None
+        if unate_vars[v]:
+            if has_1[v]:
+                stats.unate_reductions += 1
+                neg_cubes = cubes[cubes[:, v] != 2].copy()
+                neg_cubes[:, v] = 3
+                is_taut, witness = _tautology_check(neg_cubes, num_vars, stats, depth + 1, deadline, iterations)
+                if not is_taut:
+                    w = list(witness)
+                    w[v] = '0'
+                    return False, ''.join(w)
+                return True, None
+            elif has_0[v]:
+                stats.unate_reductions += 1
+                pos_cubes = cubes[cubes[:, v] != 1].copy()
+                pos_cubes[:, v] = 3
+                is_taut, witness = _tautology_check(pos_cubes, num_vars, stats, depth + 1, deadline, iterations)
+                if not is_taut:
+                    w = list(witness)
+                    w[v] = '1'
+                    return False, ''.join(w)
+                return True, None
 
-    # ── Binate split (Shannon expansion) ──────────────────────────────
+    # Binate Split
     stats.binate_splits += 1
 
-    var = _pick_binate_variable(cols, num_vars)
+    binate_mask = has_0 & has_1
+    lit_counts = c0 + c1
+    balances = np.abs(c1 - c0)
+    
+    valid_lit = np.where(binate_mask, lit_counts, -1)
+    max_lit = np.max(valid_lit)
+    candidates = (valid_lit == max_lit)
+    
+    valid_balances = np.where(candidates, balances, float('inf'))
+    var = np.argmin(valid_balances)
 
-    # Positive cofactor (var = 1)
-    pos_cubes = [c[:var] + '-' + c[var + 1:] for c in cubes if c[var] != '0']
+    pos_cubes = cubes[cubes[:, var] != 1].copy()
+    pos_cubes[:, var] = 3
     is_taut_pos, witness_pos = _tautology_check(pos_cubes, num_vars, stats, depth + 1, deadline, iterations)
     if not is_taut_pos:
         w = list(witness_pos)
         w[var] = '1'
         return False, ''.join(w)
 
-    # Negative cofactor (var = 0)
-    neg_cubes = [c[:var] + '-' + c[var + 1:] for c in cubes if c[var] != '1']
+    neg_cubes = cubes[cubes[:, var] != 2].copy()
+    neg_cubes[:, var] = 3
     is_taut_neg, witness_neg = _tautology_check(neg_cubes, num_vars, stats, depth + 1, deadline, iterations)
     if not is_taut_neg:
         w = list(witness_neg)
@@ -210,11 +150,6 @@ def _tautology_check(
         return False, ''.join(w)
 
     return True, None
-
-
-# ──────────────────────────────────────────────────────────────────────
-# Public API
-# ──────────────────────────────────────────────────────────────────────
 
 def check_tautology(
     cover: Cover,
@@ -236,10 +171,6 @@ def check_tautology(
     return is_taut, witness, stats
 
 
-# ──────────────────────────────────────────────────────────────────────
-# CLI entry point
-# ──────────────────────────────────────────────────────────────────────
-
 def main() -> None:
     if len(sys.argv) < 2:
         print("Usage: python Ha_Lenhart_tautcheck.py <path_to_file_or_folder> [<path2> ...]")
@@ -248,7 +179,8 @@ def main() -> None:
     targets = []
     for arg_path in sys.argv[1:]:
         if os.path.isdir(arg_path):
-            for file in os.listdir(arg_path):
+            files = sorted(os.listdir(arg_path))
+            for file in files:
                 full_path = os.path.join(arg_path, file)
                 if os.path.isfile(full_path) and not file.startswith('.'):
                     targets.append(full_path)
@@ -267,7 +199,6 @@ def main() -> None:
         report.append(f"  Variables : {cover.num_inputs}")
         report.append(f"  Cubes     : {cover.num_cubes}")
 
-        # Start measurement
         tracemalloc.start()
         t_start = time.perf_counter()
 
@@ -279,7 +210,6 @@ def main() -> None:
 
         elapsed = t_end - t_start
 
-        # Results
         if stats.timed_out:
             report.append(f"  Result    : TIMEOUT (exceeded {TAUTCHECK_TIMEOUT // 60} min)")
         elif is_taut:
@@ -288,19 +218,17 @@ def main() -> None:
             report.append(f"  Result    : NOT a tautology")
             report.append(f"  Witness   : {witness}")
 
-            # Write witness file
             witness_path = get_output_path(filepath, "_off_cube", "Tautcheck-Results")
             witness_cover = Cover(
                 num_inputs=cover.num_inputs,
                 num_outputs=cover.num_outputs,
                 input_labels=cover.input_labels,
                 output_labels=cover.output_labels,
-                cubes=[witness],
+                cubes=np.array([[3 if ch=='-' else 2 if ch=='1' else 1 for ch in witness]], dtype=np.uint8),
             )
             write_cover(witness_cover, witness_path)
             report.append(f"  Witness written to: {witness_path}")
 
-        # Instrumentation
         report.append(f"")
         report.append(f"  -- Instrumentation --")
         report.append(f"  Execution time     : {elapsed:.6f} s")
@@ -313,16 +241,13 @@ def main() -> None:
         if stats.timed_out:
             report.append(f"  Status             : TIMED OUT")
 
-        # Print to terminal
         for line in report:
             print(line)
 
-        # Write report to text file in results folder
         report_path = get_output_path(filepath, "_tautcheck_report.txt", "Tautcheck-Reports")
         with open(report_path, "w") as f:
             f.write("\n".join(report) + "\n")
         print(f"\n  Report written to: {report_path}")
-
 
 if __name__ == "__main__":
     main()

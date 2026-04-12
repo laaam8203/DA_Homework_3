@@ -6,8 +6,8 @@
   Result    : TAUTOLOGY
 
   -- Instrumentation --
-  Execution time     : 1.298117 s
-  Peak memory        : 10967.91 KB
+  Execution time     : 6.450070 s
+  Peak memory        : 1201.35 KB
   Max recursion depth : 21
   Base-case tautology : 16534
   Base-case NOT taut  : 0
