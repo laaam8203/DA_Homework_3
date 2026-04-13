@@ -36,7 +36,6 @@ COMPLGEN_TIMEOUT     = 60 * 60  # 1-hour wall-clock cap
 
 # ── Tuning knobs ──────────────────────────────────────────────────────
 MEMO_MAX_CUBES        = 15   # memoize _complement calls for covers this small or smaller
-LOCAL_FILTER_MIN_SIZE = 600  # apply mid-recursion containment removal above this threshold
 
 
 class ComplementTimeout(Exception):
@@ -215,9 +214,9 @@ def _merge_adjacent_hash(m1: np.ndarray, m0: np.ndarray,
 def _local_filter(cubes: np.ndarray, deadline: float) -> np.ndarray:
     """Remove dominated cubes via bitvectors, then unpack back to uint8.
 
-    Called when an intermediate result exceeds LOCAL_FILTER_MIN_SIZE to
-    prevent the cube count from compounding multiplicatively across
-    recursion levels.  For N~400-2000 and V<=64 this takes <5 ms.
+    Called when an intermediate result exceeds the dynamic filter_threshold
+    to prevent the cube count from compounding multiplicatively across recursion 
+    levels. For N~400-2000 and V<=64 this takes <5 ms.
     """
     if len(cubes) <= 1:
         return cubes
@@ -313,7 +312,7 @@ def _complement_single_cube(cube: np.ndarray, num_vars: int) -> np.ndarray:
 
 def _complement(cubes: np.ndarray, num_vars: int,
                 deadline: float, iterations: List[int], depth: int,
-                memo: dict) -> np.ndarray:
+                memo: dict, filter_threshold: int) -> np.ndarray:
     """Recursive URP complement.  Returns the complement cover as uint8 array.
 
     Parameters
@@ -327,6 +326,7 @@ def _complement(cubes: np.ndarray, num_vars: int,
                  maps frozenset-of-tobytes → copy of the result array.
                  Callers may mutate the returned array in-place, so the
                  cache always stores a separate copy.
+    filter_threshold : dynamic threshold for triggering _local_filter.
     """
     iterations[0] += 1
     if (iterations[0] & 2047) == 0 and deadline and time.perf_counter() > deadline:
@@ -359,7 +359,7 @@ def _complement(cubes: np.ndarray, num_vars: int,
         compl_common = _complement_single_cube(common, num_vars)
         rest_cubes   = cubes | (common ^ 3)             # strip common literals
         rest_cubes   = _fast_unique(rest_cubes)          # dedup after stripping
-        compl_rest   = _complement(rest_cubes, num_vars, deadline, iterations, depth + 1, memo)
+        compl_rest   = _complement(rest_cubes, num_vars, deadline, iterations, depth + 1, memo, filter_threshold)
         if len(compl_rest) > 0:
             compl_rest[:, common != 3] = common[common != 3]
             result = np.vstack([compl_common, compl_rest])
@@ -414,7 +414,7 @@ def _complement(cubes: np.ndarray, num_vars: int,
 
             f_small = cur[cur[:, vi] != lit].copy()
             f_small[:, vi] = 3
-            cs = _complement(f_small, num_vars, deadline, iterations, depth + 1, memo)
+            cs = _complement(f_small, num_vars, deadline, iterations, depth + 1, memo, filter_threshold)
             if len(cs) > 0:
                 cs[:, vi] = pin
                 res_list.append(cs)
@@ -422,7 +422,7 @@ def _complement(cubes: np.ndarray, num_vars: int,
             cur[:, vi] = 3                              # advance large chain
 
         # Single recursion for the fully-dc'd cover
-        cl = _complement(cur, num_vars, deadline, iterations, depth + 1, memo)
+        cl = _complement(cur, num_vars, deadline, iterations, depth + 1, memo, filter_threshold)
         if len(cl) > 0:
             res_list.append(cl)
 
@@ -431,7 +431,7 @@ def _complement(cubes: np.ndarray, num_vars: int,
         else:
             res = np.vstack(res_list)
             res = _fast_unique(res)
-            if len(res) > LOCAL_FILTER_MIN_SIZE:        # contain explosion early
+            if len(res) > filter_threshold:        # contain explosion early
                 res = _local_filter(res, deadline)
             result = res
 
@@ -451,8 +451,8 @@ def _complement(cubes: np.ndarray, num_vars: int,
     pos_cubes = cubes[cubes[:, var] != 1].copy(); pos_cubes[:, var] = 3
     neg_cubes = cubes[cubes[:, var] != 2].copy(); neg_cubes[:, var] = 3
 
-    cp = _complement(pos_cubes, num_vars, deadline, iterations, depth + 1, memo)
-    cn = _complement(neg_cubes, num_vars, deadline, iterations, depth + 1, memo)
+    cp = _complement(pos_cubes, num_vars, deadline, iterations, depth + 1, memo, filter_threshold)
+    cn = _complement(neg_cubes, num_vars, deadline, iterations, depth + 1, memo, filter_threshold)
 
     res_list2: list = []
     if len(cp) > 0: cp[:, var] = 2; res_list2.append(cp)
@@ -463,7 +463,7 @@ def _complement(cubes: np.ndarray, num_vars: int,
     else:
         res = np.vstack(res_list2)
         res = _fast_unique(res)
-        if len(res) > LOCAL_FILTER_MIN_SIZE:
+        if len(res) > filter_threshold:
             res = _local_filter(res, deadline)
         result = res
 
@@ -483,8 +483,9 @@ def generate_complement(cover: Cover,
     deadline   = time.perf_counter() + timeout if timeout else 0
     iterations = [0]
     memo: dict = {}                             # per-call memoisation cache
+    filter_threshold = max(300, cover.num_cubes // 20)
     try:
-        compl = _complement(cover.cubes, cover.num_inputs, deadline, iterations, 0, memo)
+        compl = _complement(cover.cubes, cover.num_inputs, deadline, iterations, 0, memo, filter_threshold)
         if len(compl) > 1:
             compl = _fast_unique(compl)
             m1, m0 = _pack_cubes(compl)
