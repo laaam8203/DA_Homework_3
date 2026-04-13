@@ -10,6 +10,11 @@ Method:
 
 Both checks use the tautology checker.
 
+Cube encoding (matches espresso_parser.py):
+    '0' → 1  (uint8)
+    '1' → 2  (uint8)
+    '-' → 3  (uint8)
+
 Usage:
     python complement_verifier.py <cover_file_F> <cover_file_G>
 
@@ -20,26 +25,77 @@ Course : VLSI Design Automation (EECE 5186C/6086C) - HW3
 from __future__ import annotations
 import sys
 import os
-from typing import List
 
-from espresso_parser import Cover, parse_cover, write_cover
+import numpy as np
+
+from espresso_parser import Cover, parse_cover
 from Ha_Lenhart_tautcheck import check_tautology
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Cube / Cover operations (all in uint8 numpy encoding)
+# ──────────────────────────────────────────────────────────────────────
+
+def _and_cubes_vectorized(cf: np.ndarray, cg_block: np.ndarray) -> np.ndarray:
+    """
+    Intersect a single cube cf (shape: (n,)) with every cube in cg_block
+    (shape: (M, n)).
+
+    Encoding rules for intersection:
+        dc  & x   → x          (3 & anything → anything)
+        x   & x   → x          (same literal → that literal)
+        x   & ~x  → empty      (1&2 or 2&1 → conflict)
+
+    We use the following vectorized formula:
+        result[j] = max(cf[j], cg[j])   when they're not conflicting
+    Conflict: one is 1 and the other is 2 (or vice-versa).
+
+    Returns the sub-array of cg_block rows that have a non-empty
+    intersection with cf, with the intersection values filled in.
+    """
+    n = len(cf)
+    # Broadcast cf across all M rows of cg_block
+    cf_b = np.broadcast_to(cf, cg_block.shape)          # (M, n)
+
+    # Conflict: one is 1 and the other is 2
+    conflict = ((cf_b == 1) & (cg_block == 2)) | ((cf_b == 2) & (cg_block == 1))
+    has_conflict = conflict.any(axis=1)                  # (M,) bool
+
+    # Intersection value: element-wise max (dc=3 is transparent; literals win)
+    inter = np.maximum(cf_b, cg_block)                  # (M, n)
+
+    # Zero out conflicting rows (we'll filter them below)
+    valid_rows = ~has_conflict
+    return inter[valid_rows]
 
 
 def _intersect_covers(f: Cover, g: Cover) -> Cover:
     """
-    Compute the intersection (AND) of two covers.
-    F . G = union of all pairwise cube intersections.
+    Compute F ∩ G: the set of all non-empty pairwise cube intersections.
+    Returns a Cover whose cubes is a numpy uint8 array.
     """
     assert f.num_inputs == g.num_inputs
     n = f.num_inputs
-    result_cubes: List[str] = []
 
+    if f.num_cubes == 0 or g.num_cubes == 0:
+        return Cover(
+            num_inputs=n,
+            num_outputs=f.num_outputs,
+            input_labels=f.input_labels,
+            output_labels=f.output_labels,
+            cubes=np.empty((0, n), dtype=np.uint8),
+        )
+
+    parts = []
     for cf in f.cubes:
-        for cg in g.cubes:
-            inter = _and_cube(cf, cg)
-            if inter is not None:
-                result_cubes.append(inter)
+        chunk = _and_cubes_vectorized(cf, g.cubes)
+        if len(chunk) > 0:
+            parts.append(chunk)
+
+    if parts:
+        result_cubes = np.vstack(parts).astype(np.uint8)
+    else:
+        result_cubes = np.empty((0, n), dtype=np.uint8)
 
     return Cover(
         num_inputs=n,
@@ -52,33 +108,37 @@ def _intersect_covers(f: Cover, g: Cover) -> Cover:
 
 def _union_covers(f: Cover, g: Cover) -> Cover:
     """
-    Compute the union (OR) of two covers.
-    Simply concatenates the cube lists.
+    Compute F ∪ G: simple concatenation of cube arrays.
     """
     assert f.num_inputs == g.num_inputs
+    n = f.num_inputs
+
+    if f.num_cubes == 0 and g.num_cubes == 0:
+        combined = np.empty((0, n), dtype=np.uint8)
+    elif f.num_cubes == 0:
+        combined = g.cubes
+    elif g.num_cubes == 0:
+        combined = f.cubes
+    else:
+        combined = np.vstack([f.cubes, g.cubes]).astype(np.uint8)
+
     return Cover(
-        num_inputs=f.num_inputs,
+        num_inputs=n,
         num_outputs=f.num_outputs,
         input_labels=f.input_labels,
         output_labels=f.output_labels,
-        cubes=f.cubes + g.cubes,
+        cubes=combined,
     )
 
 
-def _and_cube(a: str, b: str):
-    """Intersect two cubes. Returns None if empty."""
-    result = []
-    for ca, cb in zip(a, b):
-        if ca == '-':
-            result.append(cb)
-        elif cb == '-':
-            result.append(ca)
-        elif ca == cb:
-            result.append(ca)
-        else:
-            return None
-    return ''.join(result)
+def _cube_to_str(cube: np.ndarray) -> str:
+    """Convert a uint8 cube row back to a human-readable string."""
+    return ''.join('-' if v == 3 else '1' if v == 2 else '0' for v in cube)
 
+
+# ──────────────────────────────────────────────────────────────────────
+# Verification logic
+# ──────────────────────────────────────────────────────────────────────
 
 def verify_complement(f: Cover, g: Cover) -> bool:
     """
@@ -90,17 +150,17 @@ def verify_complement(f: Cover, g: Cover) -> bool:
 
     passed = True
 
-    # Check 1: G . F = 0
+    # ── Check 1: F ∩ G = ∅ ────────────────────────────────────────────
     print("\n  Check 1: F intersect G = empty?")
     fg_inter = _intersect_covers(f, g)
     if fg_inter.num_cubes == 0:
         print("    PASS - Intersection is empty (no cubes).")
     else:
         print(f"    FAIL - Intersection has {fg_inter.num_cubes} cubes.")
-        print(f"    Witness (from intersection): {fg_inter.cubes[0]}")
+        print(f"    Witness (from intersection): {_cube_to_str(fg_inter.cubes[0])}")
         passed = False
 
-    # Check 2: G + F = 1
+    # ── Check 2: F ∪ G = 1 ────────────────────────────────────────────
     print("\n  Check 2: F union G = tautology?")
     fg_union = _union_covers(f, g)
     is_taut, witness, _ = check_tautology(fg_union)
@@ -113,6 +173,10 @@ def verify_complement(f: Cover, g: Cover) -> bool:
 
     return passed
 
+
+# ──────────────────────────────────────────────────────────────────────
+# Entry point
+# ──────────────────────────────────────────────────────────────────────
 
 def main() -> None:
     if len(sys.argv) != 3:
@@ -130,14 +194,17 @@ def main() -> None:
     f = parse_cover(f_path)
     g = parse_cover(g_path)
 
+    print(f"  F: {f.num_cubes} cubes over {f.num_inputs} variables")
+    print(f"  G: {g.num_cubes} cubes over {g.num_inputs} variables")
+
     result = verify_complement(f, g)
 
     print(f"\n  {'='*40}")
     if result:
-        print(f"  RESULT: G IS the complement of F")
+        print(f"  RESULT: G IS the complement of F  ✓")
     else:
-        print(f"  RESULT: G is NOT the complement of F")
-    print(f"  {'='*40}")
+        print(f"  RESULT: G is NOT the complement of F  ✗")
+    print(f"  {'='*40}\n")
 
 
 if __name__ == "__main__":
