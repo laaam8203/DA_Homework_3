@@ -117,20 +117,59 @@ def _complement(cubes: np.ndarray, num_vars: int, deadline: float, iterations: L
     has_0 = c0 > 0
     has_1 = c1 > 0
 
-    # Shannon expansion (binate split).
-    # Prefer binate variables (both polarities) for balanced splits; if none exist
-    # (all variables are unate), split on any variable that has at least one literal.
-    # NOTE: the single-cofactor unate shortcut from tautcheck is INVALID here —
-    # the complement can have minterms in both x=0 and x=1 half-spaces even when
-    # x is unate in F. We must always compute both Shannon branches.
-    lit_counts = c0 + c1
+    # ── Unate variable optimization (lecture theorem) ─────────────────────
+    # For pos-unate x_j (appears only as x=1 or dc, never x=0):
+    #   F̄ = complement(F_{x_j=1})        ← x_j left as dc, spans BOTH halves
+    #       + x̄_j · complement(F_{x_j=0}) ← extra holes specific to x_j=0
+    # Correctness: by pos-unate monotonicity F(x=0) ⊆ F(x=1), so any x=1 hole
+    # is also an x=0 hole. The first term's cubes (with x_j=dc) are therefore
+    # valid across both half-spaces without needing a literal. Only the x=0-
+    # exclusive holes need the x̄_j literal in the second term.
+    # Neg-unate is symmetric (swap roles of x=0 and x=1).
+    # Advantage over naive binate split: keeps x_j=dc in the first-term cubes,
+    # producing a more compact cover (larger cubes cover more minterms).
+    unate_mask = (~(has_0 & has_1)) & (has_0 | has_1)
+    if np.any(unate_mask):
+        u_indices = np.where(unate_mask)[0]
+        vi = int(u_indices[np.argmax((c0 + c1)[u_indices])])  # most-literal unate var
+        pos_unate = bool(has_1[vi])   # True → pos-unate, False → neg-unate
+
+        if pos_unate:
+            # F_{vi=1}: all cubes, vi→dc (larger cofactor)
+            # F_{vi=0}: cubes where vi≠2, vi→dc (smaller cofactor)
+            f_large = cubes.copy();               f_large[:, vi] = 3
+            f_small = cubes[cubes[:, vi] != 2].copy(); f_small[:, vi] = 3
+            compl_large = _complement(f_large, num_vars, deadline, iterations, depth + 1)
+            # compl_large: x_j stays dc — valid for both halves by monotonicity ✓
+            compl_small = _complement(f_small, num_vars, deadline, iterations, depth + 1)
+            if len(compl_small) > 0:
+                compl_small[:, vi] = 1          # pin to x̄_j (value 1 = '0')
+        else:
+            # Neg-unate: F_{vi=0} is the larger cofactor (symmetric)
+            f_large = cubes.copy();               f_large[:, vi] = 3
+            f_small = cubes[cubes[:, vi] != 1].copy(); f_small[:, vi] = 3
+            compl_large = _complement(f_large, num_vars, deadline, iterations, depth + 1)
+            # compl_large: x_j stays dc — valid for both halves ✓
+            compl_small = _complement(f_small, num_vars, deadline, iterations, depth + 1)
+            if len(compl_small) > 0:
+                compl_small[:, vi] = 2          # pin to x_j (value 2 = '1')
+
+        res_list = [r for r in [compl_large, compl_small] if len(r) > 0]
+        return np.vstack(res_list) if res_list else np.empty((0, num_vars), dtype=np.uint8)
+
+    # ── Binate split ──────────────────────────────────────────────────────
+    # All remaining variables are binate (both polarities). If we reach here,
+    # binate_mask is guaranteed to be non-empty (otherwise all cubes would be
+    # all-dc, caught by the universal-cube base case above).
+    # Variable selection: primary = most literals (most constrained), 
+    #                     secondary = most balanced (minimize |c0-c1|)
+    # Balancing the two branches reduces asymmetric recursion depth.
     binate_mask = has_0 & has_1
-    if np.any(binate_mask):
-        var = int(np.argmax(np.where(binate_mask, lit_counts, -1)))
-    else:
-        # All unate: split on the variable with the most literals to reduce depth.
-        any_literal = has_0 | has_1
-        var = int(np.argmax(np.where(any_literal, lit_counts, -1)))
+    lit_counts  = c0 + c1
+    balances    = np.abs(c1 - c0)
+    valid_lit   = np.where(binate_mask, lit_counts, -1)
+    candidates  = (valid_lit == np.max(valid_lit))        # all vars tied for max literals
+    var = int(np.argmin(np.where(candidates, balances, np.iinfo(np.int64).max)))
 
     pos_cubes = cubes[cubes[:, var] != 1].copy(); pos_cubes[:, var] = 3
     neg_cubes = cubes[cubes[:, var] != 2].copy(); neg_cubes[:, var] = 3

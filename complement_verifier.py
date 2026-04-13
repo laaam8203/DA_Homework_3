@@ -201,9 +201,9 @@ def main() -> None:
 
     print(f"\n  {'='*40}")
     if result:
-        print(f"  RESULT: G IS the complement of F  ✓")
+        print(f"  RESULT: G IS the complement of F  [PASS]")
     else:
-        print(f"  RESULT: G is NOT the complement of F  ✗")
+        print(f"  RESULT: G is NOT the complement of F  [FAIL]")
     print(f"  {'='*40}\n")
 
 
