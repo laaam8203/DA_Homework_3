@@ -116,29 +116,21 @@ def _complement(cubes: np.ndarray, num_vars: int, deadline: float, iterations: L
     c1 = np.sum(cubes == 2, axis=0)
     has_0 = c0 > 0
     has_1 = c1 > 0
-    unate_mask = ~(has_0 & has_1) & (has_0 | has_1)
 
-    if np.any(unate_mask):
-        # Multi-variable unate reduction: all unate vars handled in one recursive call.
-        # Pos-unate x_j: F_bar = x_j=0 · (F_{x_j=0})_bar  (filter cubes requiring x_j=1)
-        # Neg-unate x_j: F_bar = x_j=1 · (F_{x_j=1})_bar  (filter cubes requiring x_j=0)
-        u_indices = np.where(unate_mask)[0]
-        row_mask = np.ones(len(cubes), dtype=bool)
-        for vi in u_indices:
-            row_mask &= (cubes[:, vi] != (2 if has_1[vi] else 1))
-        f_reduced = cubes[row_mask].copy()
-        f_reduced[:, u_indices] = 3
-        res = _complement(f_reduced, num_vars, deadline, iterations, depth + 1)
-        if len(res) > 0:
-            pos_u = u_indices[has_1[u_indices]]
-            neg_u = u_indices[~has_1[u_indices]]
-            if len(pos_u): res[:, pos_u] = 1   # pos-unate: complement in x=0 half-space
-            if len(neg_u): res[:, neg_u] = 2   # neg-unate: complement in x=1 half-space
-        return res
-
-    # Binate split: select variable with maximum literal count (most constrained)
+    # Shannon expansion (binate split).
+    # Prefer binate variables (both polarities) for balanced splits; if none exist
+    # (all variables are unate), split on any variable that has at least one literal.
+    # NOTE: the single-cofactor unate shortcut from tautcheck is INVALID here —
+    # the complement can have minterms in both x=0 and x=1 half-spaces even when
+    # x is unate in F. We must always compute both Shannon branches.
+    lit_counts = c0 + c1
     binate_mask = has_0 & has_1
-    var = int(np.argmax(np.where(binate_mask, c0 + c1, -1)))
+    if np.any(binate_mask):
+        var = int(np.argmax(np.where(binate_mask, lit_counts, -1)))
+    else:
+        # All unate: split on the variable with the most literals to reduce depth.
+        any_literal = has_0 | has_1
+        var = int(np.argmax(np.where(any_literal, lit_counts, -1)))
 
     pos_cubes = cubes[cubes[:, var] != 1].copy(); pos_cubes[:, var] = 3
     neg_cubes = cubes[cubes[:, var] != 2].copy(); neg_cubes[:, var] = 3
