@@ -3,10 +3,10 @@
 ============================================================
   Variables    : 50
   Input cubes  : 10000
-  Output cubes : 70630
-  Written to   : Tautology-Checking-Benchmarks-Complgen-Results/TC_B8_compl
+  Result       : TIMEOUT (exceeded 60 min)
+  Output cubes : 0 (Partial/Invalid)
 
   -- Instrumentation --
-  Execution time : 341.682116 s
-  Peak memory    : 22356.50 KB
+  Execution time : 3602.610063 s
+  Peak memory    : 916440.56 KB
 

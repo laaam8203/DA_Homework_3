@@ -8,7 +8,7 @@
   Witness written to: Tautology-Checking-Benchmarks-Tautcheck-Results/TC_B5_off_cube
 
   -- Instrumentation --
-  Execution time     : 0.018535 s
+  Execution time     : 0.018587 s
   Peak memory        : 2577.23 KB
   Max recursion depth : 13
   Base-case tautology : 0

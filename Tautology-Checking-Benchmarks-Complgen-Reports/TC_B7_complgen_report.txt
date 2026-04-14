@@ -3,10 +3,10 @@
 ============================================================
   Variables    : 32
   Input cubes  : 98302
-  Output cubes : 19588
+  Output cubes : 98303
   Written to   : Tautology-Checking-Benchmarks-Complgen-Results/TC_B7_compl
 
   -- Instrumentation --
-  Execution time : 16.388232 s
-  Peak memory    : 9980.99 KB
+  Execution time : 13.887065 s
+  Peak memory    : 26904.78 KB
 
