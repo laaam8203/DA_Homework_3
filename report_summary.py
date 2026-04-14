@@ -213,139 +213,170 @@ def generate_complgen_table(reports: List[Dict]) -> str:
 # Plot generation
 # ======================================================================
 
+def _apply_yscale(ax, values: list, ylabel: str, log_threshold: float = 50.0) -> None:
+    """Switch to log scale when max/min exceeds log_threshold; annotate ylabel."""
+    pos = [v for v in values if v > 0]
+    if pos and max(pos) / min(pos) >= log_threshold:
+        ax.set_yscale("log")
+        ax.set_ylabel(f"{ylabel}  [log scale]")
+    else:
+        ax.set_ylabel(ylabel)
+
+
+def _style_xaxis(ax, names: list) -> None:
+    ax.set_xticks(range(len(names)))
+    ax.set_xticklabels(names, rotation=45, ha="right", fontsize=8)
+
+
 def generate_tautcheck_plots(reports: List[Dict], output_dir: str) -> List[str]:
-    """Generate plots for tautology checker reports. Returns list of saved paths."""
+    """Produce a single 2×2 combined figure for all four tautcheck metrics.
+
+    Y-axes automatically switch to log scale when the value range across
+    benchmarks exceeds 50×, so small benchmarks remain visible alongside
+    large ones on the same panel.
+    """
     if not HAS_MATPLOTLIB or not reports:
         return []
 
     reports = sorted(reports, key=_sort_key)
-    names = [r.get("benchmark", "?") for r in reports]
-    saved = []
+    names  = [r.get("benchmark", "?") for r in reports]
+    n      = len(names)
+    x      = list(range(n))
 
-    plt.style.use("seaborn-v0_8-darkgrid") if "seaborn-v0_8-darkgrid" in plt.style.available else None
+    times   = [r.get("exec_time",        0) for r in reports]
+    mems    = [r.get("peak_memory_kb",   0) for r in reports]
+    depths  = [r.get("max_depth",        0) for r in reports]
+    unates  = [r.get("unate_reductions", 0) for r in reports]
+    binates = [r.get("binate_splits",    0) for r in reports]
+    c_bars  = ["#2ecc71" if r.get("result", "") == "TAUTOLOGY" else "#e74c3c"
+               for r in reports]
 
-    # --- Execution Time ---
-    fig, ax = plt.subplots(figsize=(max(8, len(names) * 0.6), 5))
-    times = [r.get("exec_time", 0) for r in reports]
-    colors = ["#2ecc71" if r.get("result", "") == "TAUTOLOGY" else "#e74c3c" for r in reports]
-    ax.bar(names, times, color=colors, edgecolor="white", linewidth=0.5)
-    ax.set_ylabel("Execution Time (s)")
-    ax.set_title("Tautology Checker - Execution Time")
-    ax.tick_params(axis='x', rotation=45)
+    style = "seaborn-v0_8-darkgrid"
+    if style in plt.style.available:
+        plt.style.use(style)
+
+    fig_w = max(14, n * 0.9)
+    fig, axes = plt.subplots(2, 2, figsize=(fig_w, 10))
+    fig.suptitle("Tautology Checker — Benchmark Summary", fontsize=13,
+                 fontweight="bold")
+
+    # ── Execution Time (top-left) ──────────────────────────────────────
+    ax = axes[0, 0]
+    ax.bar(x, times, color=c_bars, edgecolor="white", linewidth=0.5)
+    _style_xaxis(ax, names)
+    _apply_yscale(ax, times, "Execution Time (s)")
+    ax.set_title("Execution Time")
     ax.legend(handles=[
-        plt.Rectangle((0,0),1,1, color="#2ecc71", label="Tautology"),
-        plt.Rectangle((0,0),1,1, color="#e74c3c", label="Not Tautology"),
-    ], loc="upper left")
-    fig.tight_layout()
-    path = os.path.join(output_dir, "tautcheck_exec_time.png")
-    fig.savefig(path, dpi=150)
-    plt.close(fig)
-    saved.append(path)
+        plt.Rectangle((0, 0), 1, 1, color="#2ecc71", label="Tautology"),
+        plt.Rectangle((0, 0), 1, 1, color="#e74c3c", label="Not Tautology"),
+    ], fontsize=8, loc="upper left")
 
-    # --- Peak Memory ---
-    fig, ax = plt.subplots(figsize=(max(8, len(names) * 0.6), 5))
-    mems = [r.get("peak_memory_kb", 0) for r in reports]
-    ax.bar(names, mems, color="#3498db", edgecolor="white", linewidth=0.5)
-    ax.set_ylabel("Peak Memory (KB)")
-    ax.set_title("Tautology Checker - Peak Memory Usage")
-    ax.tick_params(axis='x', rotation=45)
-    fig.tight_layout()
-    path = os.path.join(output_dir, "tautcheck_memory.png")
-    fig.savefig(path, dpi=150)
-    plt.close(fig)
-    saved.append(path)
+    # ── Peak Memory (top-right) ────────────────────────────────────────
+    ax = axes[0, 1]
+    ax.bar(x, mems, color="#3498db", edgecolor="white", linewidth=0.5)
+    _style_xaxis(ax, names)
+    _apply_yscale(ax, mems, "Peak Memory (KB)")
+    ax.set_title("Peak Memory Usage")
 
-    # --- Recursion Depth ---
-    fig, ax = plt.subplots(figsize=(max(8, len(names) * 0.6), 5))
-    depths = [r.get("max_depth", 0) for r in reports]
-    ax.bar(names, depths, color="#9b59b6", edgecolor="white", linewidth=0.5)
-    ax.set_ylabel("Max Recursion Depth")
-    ax.set_title("Tautology Checker - Recursion Depth")
-    ax.tick_params(axis='x', rotation=45)
-    fig.tight_layout()
-    path = os.path.join(output_dir, "tautcheck_depth.png")
-    fig.savefig(path, dpi=150)
-    plt.close(fig)
-    saved.append(path)
+    # ── Recursion Depth (bottom-left) ─────────────────────────────────
+    ax = axes[1, 0]
+    ax.bar(x, depths, color="#9b59b6", edgecolor="white", linewidth=0.5)
+    _style_xaxis(ax, names)
+    _apply_yscale(ax, depths, "Max Recursion Depth")
+    ax.set_title("Max Recursion Depth")
 
-    # --- Binate Splits vs Unate Reductions (stacked) ---
-    fig, ax = plt.subplots(figsize=(max(8, len(names) * 0.6), 5))
-    unates = [r.get("unate_reductions", 0) for r in reports]
-    binates = [r.get("binate_splits", 0) for r in reports]
-    x = range(len(names))
-    ax.bar(x, binates, color="#e67e22", edgecolor="white", linewidth=0.5, label="Binate Splits")
-    ax.bar(x, unates, bottom=binates, color="#1abc9c", edgecolor="white", linewidth=0.5, label="Unate Reductions")
-    ax.set_xticks(list(x))
-    ax.set_xticklabels(names, rotation=45, ha="right")
-    ax.set_ylabel("Count")
-    ax.set_title("Tautology Checker - Binate Splits & Unate Reductions")
-    ax.legend()
-    fig.tight_layout()
-    path = os.path.join(output_dir, "tautcheck_splits.png")
-    fig.savefig(path, dpi=150)
-    plt.close(fig)
-    saved.append(path)
+    # ── Binate Splits & Unate Reductions stacked (bottom-right) ───────
+    ax = axes[1, 1]
+    ax.bar(x, binates, color="#e67e22", edgecolor="white", linewidth=0.5,
+           label="Binate Splits")
+    ax.bar(x, unates, bottom=binates, color="#1abc9c", edgecolor="white",
+           linewidth=0.5, label="Unate Reductions")
+    _style_xaxis(ax, names)
+    totals = [u + b for u, b in zip(unates, binates)]
+    _apply_yscale(ax, totals, "Count")
+    ax.set_title("Binate Splits & Unate Reductions")
+    ax.legend(fontsize=8)
 
-    return saved
+    fig.tight_layout()
+    path = os.path.join(output_dir, "tautcheck_combined.png")
+    fig.savefig(path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    return [path]
 
 
 def generate_complgen_plots(reports: List[Dict], output_dir: str) -> List[str]:
-    """Generate plots for complement generator reports. Returns list of saved paths."""
+    """Produce a single 2×2 combined figure for all four complgen metrics.
+
+    The fourth panel shows output-cube count as a fraction of input-cube
+    count (complement density), which is more informative than absolute
+    counts when input sizes span several orders of magnitude.
+
+    Y-axes automatically switch to log scale when the value range exceeds 50×.
+    """
     if not HAS_MATPLOTLIB or not reports:
         return []
 
     reports = sorted(reports, key=_sort_key)
-    names = [r.get("benchmark", "?") for r in reports]
-    saved = []
+    names    = [r.get("benchmark", "?") for r in reports]
+    n        = len(names)
+    x        = list(range(n))
 
-    # --- Execution Time ---
-    fig, ax = plt.subplots(figsize=(max(8, len(names) * 0.6), 5))
-    times = [r.get("exec_time", 0) for r in reports]
-    ax.bar(names, times, color="#e74c3c", edgecolor="white", linewidth=0.5)
-    ax.set_ylabel("Execution Time (s)")
-    ax.set_title("Complement Generator - Execution Time")
-    ax.tick_params(axis='x', rotation=45)
-    fig.tight_layout()
-    path = os.path.join(output_dir, "complgen_exec_time.png")
-    fig.savefig(path, dpi=150)
-    plt.close(fig)
-    saved.append(path)
+    times     = [r.get("exec_time",      0) for r in reports]
+    mems      = [r.get("peak_memory_kb", 0) for r in reports]
+    in_cubes  = [r.get("cubes",          0) for r in reports]
+    out_cubes = [r.get("output_cubes",   0) for r in reports]
+    ratios    = [o / i * 100 if i > 0 else 0
+                 for o, i in zip(out_cubes, in_cubes)]
 
-    # --- Peak Memory ---
-    fig, ax = plt.subplots(figsize=(max(8, len(names) * 0.6), 5))
-    mems = [r.get("peak_memory_kb", 0) for r in reports]
-    ax.bar(names, mems, color="#3498db", edgecolor="white", linewidth=0.5)
-    ax.set_ylabel("Peak Memory (KB)")
-    ax.set_title("Complement Generator - Peak Memory Usage")
-    ax.tick_params(axis='x', rotation=45)
-    fig.tight_layout()
-    path = os.path.join(output_dir, "complgen_memory.png")
-    fig.savefig(path, dpi=150)
-    plt.close(fig)
-    saved.append(path)
+    style = "seaborn-v0_8-darkgrid"
+    if style in plt.style.available:
+        plt.style.use(style)
 
-    # --- Input vs Output Cubes ---
-    fig, ax = plt.subplots(figsize=(max(8, len(names) * 0.6), 5))
-    in_cubes = [r.get("cubes", 0) for r in reports]
-    out_cubes = [r.get("output_cubes", 0) for r in reports]
-    x = range(len(names))
-    width = 0.35
-    ax.bar([i - width/2 for i in x], in_cubes, width, color="#2ecc71",
+    fig_w = max(14, n * 0.9)
+    fig, axes = plt.subplots(2, 2, figsize=(fig_w, 10))
+    fig.suptitle("Complement Generator — Benchmark Summary", fontsize=13,
+                 fontweight="bold")
+
+    # ── Execution Time (top-left) ──────────────────────────────────────
+    ax = axes[0, 0]
+    ax.bar(x, times, color="#e74c3c", edgecolor="white", linewidth=0.5)
+    _style_xaxis(ax, names)
+    _apply_yscale(ax, times, "Execution Time (s)")
+    ax.set_title("Execution Time")
+
+    # ── Peak Memory (top-right) ────────────────────────────────────────
+    ax = axes[0, 1]
+    ax.bar(x, mems, color="#3498db", edgecolor="white", linewidth=0.5)
+    _style_xaxis(ax, names)
+    _apply_yscale(ax, mems, "Peak Memory (KB)")
+    ax.set_title("Peak Memory Usage")
+
+    # ── Input vs Output Cubes grouped (bottom-left) ────────────────────
+    ax = axes[1, 0]
+    w = 0.35
+    ax.bar([i - w / 2 for i in x], in_cubes,  w, color="#2ecc71",
            edgecolor="white", linewidth=0.5, label="Input Cubes")
-    ax.bar([i + width/2 for i in x], out_cubes, width, color="#e67e22",
+    ax.bar([i + w / 2 for i in x], out_cubes, w, color="#e67e22",
            edgecolor="white", linewidth=0.5, label="Output Cubes")
-    ax.set_xticks(list(x))
-    ax.set_xticklabels(names, rotation=45, ha="right")
-    ax.set_ylabel("Cube Count")
-    ax.set_title("Complement Generator - Input vs Output Cubes")
-    ax.legend()
-    fig.tight_layout()
-    path = os.path.join(output_dir, "complgen_cubes.png")
-    fig.savefig(path, dpi=150)
-    plt.close(fig)
-    saved.append(path)
+    _style_xaxis(ax, names)
+    _apply_yscale(ax, in_cubes + out_cubes, "Cube Count")
+    ax.set_title("Input vs Output Cubes")
+    ax.legend(fontsize=8)
 
-    return saved
+    # ── Complement density: output / input % (bottom-right) ────────────
+    ax = axes[1, 1]
+    ax.bar(x, ratios, color="#8e44ad", edgecolor="white", linewidth=0.5)
+    _style_xaxis(ax, names)
+    ax.set_ylabel("Output / Input  (%)")
+    ax.set_title("Complement Density  (output cubes / input cubes)")
+    # Always linear — ratios are 0–100 %
+    ax.set_ylim(bottom=0)
+
+    fig.tight_layout()
+    path = os.path.join(output_dir, "complgen_combined.png")
+    fig.savefig(path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    return [path]
 
 
 # ======================================================================
